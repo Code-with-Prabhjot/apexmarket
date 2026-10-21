@@ -129,12 +129,14 @@ CREATE INDEX IF NOT EXISTS idx_job_shreds_status ON job_shreds(status);
 
 -- -----------------------------------------------------------------------------
 -- 5. DOUBLE-ENTRY LEDGER ENTRIES
+-- Foreign keys are checked at commit so escrow can be locked before the job row
+-- is inserted in the same transaction.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS ledger_entries (
     entry_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     idempotency_key TEXT NOT NULL UNIQUE,
-    job_id UUID REFERENCES batch_jobs(job_id) ON DELETE SET NULL,
-    shred_id UUID REFERENCES job_shreds(shred_id) ON DELETE SET NULL,
+    job_id UUID REFERENCES batch_jobs(job_id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
+    shred_id UUID REFERENCES job_shreds(shred_id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED,
     debit_account TEXT NOT NULL,
     credit_account TEXT NOT NULL,
     amount_micros BIGINT NOT NULL CHECK (amount_micros > 0),
