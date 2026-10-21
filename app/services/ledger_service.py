@@ -98,7 +98,42 @@ class LedgerService:
         """
         Records a double-entry ledger transaction.
         Enforces idempotency: if the idempotency_key already exists, returns existing entry_id.
-        The insert uses ON CONFLICT so concurrent writers with the same key cannot both insert.
+        """
+        entry_id = await LedgerService.insert_entry_if_new(
+            db=db,
+            idempotency_key=idempotency_key,
+            debit_account=debit_account,
+            credit_account=credit_account,
+            amount_micros=amount_micros,
+            description=description,
+            job_id=job_id,
+            shred_id=shred_id,
+        )
+        if entry_id is not None:
+            return entry_id
+
+        existing = await db.execute(
+            text("SELECT entry_id FROM ledger_entries WHERE idempotency_key = :key"),
+            {"key": idempotency_key},
+        )
+        return existing.scalar_one()
+
+    @staticmethod
+    async def insert_entry_if_new(
+        db: AsyncSession,
+        idempotency_key: str,
+        debit_account: str,
+        credit_account: str,
+        amount_micros: int,
+        description: str,
+        job_id: Optional[uuid.UUID] = None,
+        shred_id: Optional[uuid.UUID] = None,
+    ) -> Optional[uuid.UUID]:
+        """
+        Inserts a ledger entry and returns its entry_id, or None if the idempotency_key
+        was already recorded. The insert uses ON CONFLICT so concurrent writers with the
+        same key cannot both insert. Callers apply balance changes only when this returns
+        an entry_id, which keeps balances and the ledger in step on retries.
         """
         if amount_micros <= 0:
             raise ValueError(f"amount_micros must be positive: {amount_micros}")
@@ -129,14 +164,7 @@ class LedgerService:
             },
         )
         inserted_row = inserted.fetchone()
-        if inserted_row:
-            return inserted_row[0]
-
-        existing = await db.execute(
-            text("SELECT entry_id FROM ledger_entries WHERE idempotency_key = :key"),
-            {"key": idempotency_key},
-        )
-        return existing.scalar_one()
+        return inserted_row[0] if inserted_row else None
 
     @staticmethod
     async def lock_client_escrow(
@@ -149,7 +177,9 @@ class LedgerService:
         Acquires row-level lock on client record with SELECT ... FOR UPDATE.
         Verifies balance and hourly circuit breaker, transfers micro-dollars
         from available_balance_micros to locked_escrow_micros, and writes ledger entry.
+        A retry for a job whose escrow is already locked returns True without moving funds again.
         """
+        idempotency_key = f"escrow_lock:{job_id}"
         result = await db.execute(
             text("""
                 SELECT available_balance_micros, hourly_spend_limit_micros
@@ -162,6 +192,14 @@ class LedgerService:
         client = result.fetchone()
         if not client:
             raise ValueError(f"Client {client_id} not found.")
+
+        # The client row lock serializes retries for the same job, so this check cannot race.
+        already_locked = await db.execute(
+            text("SELECT 1 FROM ledger_entries WHERE idempotency_key = :key"),
+            {"key": idempotency_key},
+        )
+        if already_locked.fetchone():
+            return True
 
         available, hourly_limit = client.available_balance_micros, client.hourly_spend_limit_micros
 
@@ -187,7 +225,6 @@ class LedgerService:
         )
 
         # Record double-entry transaction
-        idempotency_key = f"escrow_lock:{job_id}"
         await LedgerService.record_entry(
             db=db,
             idempotency_key=idempotency_key,
@@ -212,8 +249,25 @@ class LedgerService:
         """
         Credits node earnings after successful 5-tier shred verification.
         Debits client_escrow, credits node_probation or node_withdrawable.
+        The ledger entry is written first; a repeat credit for the same shred is a no-op.
         """
         if shred_cost_micros <= 0:
+            return
+
+        target_column = "pending_probation_micros" if is_probation else "withdrawable_micros"
+        target_account = f"node_probation:{node_id}" if is_probation else f"node_withdrawable:{node_id}"
+
+        entry_id = await LedgerService.insert_entry_if_new(
+            db=db,
+            idempotency_key=f"shred_credit:{shred_id}:{node_id}",
+            debit_account=f"client_escrow:{client_id}",
+            credit_account=target_account,
+            amount_micros=shred_cost_micros,
+            description=f"Verified shred payout for {shred_id} on node {node_id}",
+            job_id=job_id,
+            shred_id=shred_id,
+        )
+        if entry_id is None:
             return
 
         # Deduct from client's locked escrow
@@ -227,9 +281,6 @@ class LedgerService:
         )
 
         # Credit compute node
-        target_column = "pending_probation_micros" if is_probation else "withdrawable_micros"
-        target_account = f"node_probation:{node_id}" if is_probation else f"node_withdrawable:{node_id}"
-
         await db.execute(
             text(f"""
                 UPDATE compute_nodes
@@ -237,19 +288,6 @@ class LedgerService:
                 WHERE node_id = :node_id
             """),
             {"amount": shred_cost_micros, "node_id": node_id},
-        )
-
-        # Record ledger entry
-        idempotency_key = f"shred_credit:{shred_id}:{node_id}"
-        await LedgerService.record_entry(
-            db=db,
-            idempotency_key=idempotency_key,
-            debit_account=f"client_escrow:{client_id}",
-            credit_account=target_account,
-            amount_micros=shred_cost_micros,
-            description=f"Verified shred payout for {shred_id} on node {node_id}",
-            job_id=job_id,
-            shred_id=shred_id,
         )
 
     @staticmethod
@@ -275,17 +313,7 @@ class LedgerService:
 
         # Adjust client escrow and available balances
         if unused_micros > 0:
-            await db.execute(
-                text("""
-                    UPDATE clients
-                    SET locked_escrow_micros = locked_escrow_micros - :unused,
-                        available_balance_micros = available_balance_micros + :unused
-                    WHERE client_id = :client_id
-                """),
-                {"unused": unused_micros, "client_id": client_id},
-            )
-
-            await LedgerService.record_entry(
+            refund_entry_id = await LedgerService.insert_entry_if_new(
                 db=db,
                 idempotency_key=f"escrow_refund:{job_id}",
                 debit_account=f"client_escrow:{client_id}",
@@ -294,6 +322,16 @@ class LedgerService:
                 description=f"Unused escrow release for job {job_id}",
                 job_id=job_id,
             )
+            if refund_entry_id is not None:
+                await db.execute(
+                    text("""
+                        UPDATE clients
+                        SET locked_escrow_micros = locked_escrow_micros - :unused,
+                            available_balance_micros = available_balance_micros + :unused
+                        WHERE client_id = :client_id
+                    """),
+                    {"unused": unused_micros, "client_id": client_id},
+                )
 
         if platform_fee > 0:
             await LedgerService.record_entry(
