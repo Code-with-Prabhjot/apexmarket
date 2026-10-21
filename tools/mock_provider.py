@@ -2,7 +2,7 @@
 Run: MOCK_NAME=spot1 MOCK_TTFT_MS=40 uvicorn tools.mock_provider:app --port 9001
 Runtime chaos: POST /admin/config {"fail_rate":1.0} or {"degraded":true}
 """
-import asyncio, hashlib, json, os, random
+import asyncio, hashlib, json, os, random, re
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -20,12 +20,32 @@ def _cfg_from_env() -> dict:
 
 def honest_text(prompt: str, max_tokens: int) -> str:
     """Deterministic: every honest node returns identical output for a prompt."""
+    m_add = re.search(r"sum of (\d+) and (\d+)", prompt)
+    if m_add:
+        return str(int(m_add.group(1)) + int(m_add.group(2)))
+
+    m_mult = re.search(r"product of (\d+) and (\d+)", prompt)
+    if m_mult:
+        return str(int(m_mult.group(1)) * int(m_mult.group(2)))
+
+    m_json = re.search(r'From the JSON payload (\{.*?\}).*?numeric value of "([^"]+)"', prompt)
+    if m_json:
+        try:
+            data = json.loads(m_json.group(1))
+            val = data.get(m_json.group(2))
+            if val is not None:
+                return str(val)
+        except Exception:
+            pass
+
     h = hashlib.sha1(prompt.encode()).hexdigest()
     words = [f"w{h[i:i+3]}" for i in range(0, 30, 3)]
     return " ".join(words[: max(1, min(max_tokens, len(words)))])
 
 
 def degraded_text(prompt: str, max_tokens: int) -> str:
+    if any(k in prompt for k in ("sum of", "product of", "From the JSON payload")):
+        return f"garbled calculation error {random.randint(1000000, 9999999)}"
     words = honest_text(prompt, max_tokens).split()
     random.Random(prompt).shuffle(words)
     return " ".join(["garbled"] + words[: max(1, len(words) // 2)])

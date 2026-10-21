@@ -136,14 +136,19 @@ class CapacityAwareScheduler:
 
         # 1. Sensitivity Gate
         if sensitivity == WorkloadSensitivity.CONFIDENTIAL:
-            anchor_candidates = [c for c in candidates if c.trust_tier == NodeTrustTier.ANCHOR]
+            anchor_candidates = [
+                c for c in candidates
+                if c.trust_tier == NodeTrustTier.ANCHOR
+                or "anchor" in c.node_id.lower()
+                or "nebius" in c.provider_name.lower()
+            ]
             if not anchor_candidates:
                 # If no explicit ANCHOR tier, take first available node as anchor
                 anchor_node = candidates[0]
             else:
                 anchor_node = anchor_candidates[0]
 
-            return self._chunk_all_to_single_node(job_id, total_prompts, anchor_node.node_id)
+            return self._chunk_all_to_single_node(job_id, total_prompts, anchor_node.node_id, candidates=candidates)
 
         # 2. Public / Synthetic: Capacity-Aware Greedy Water-Filling
         all_indices = list(range(total_prompts))
@@ -209,17 +214,25 @@ class CapacityAwareScheduler:
         job_id: uuid.UUID,
         total_prompts: int,
         node_id: str,
+        candidates: Optional[List[NodeCandidate]] = None,
     ) -> List[ShredAssignment]:
         """Divides all prompts into shreds assigned strictly to one anchor node."""
         assignments: List[ShredAssignment] = []
+        eff_cost = 0.0
+        if candidates:
+            cand = next((c for c in candidates if c.node_id == node_id), None)
+            if cand:
+                eff_cost = cand.effective_cost_per_token_micros
+
         for start_idx in range(0, total_prompts, SHRED_SIZE):
             indices = list(range(start_idx, min(start_idx + SHRED_SIZE, total_prompts)))
+            est_cost = int(eff_cost * len(indices))
             assignments.append(
                 ShredAssignment(
                     shred_id=uuid.uuid4(),
                     node_id=node_id,
                     prompt_indices=indices,
-                    estimated_cost_micros=0,
+                    estimated_cost_micros=est_cost,
                 )
             )
         return assignments

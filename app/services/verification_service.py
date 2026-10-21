@@ -167,6 +167,7 @@ class VerificationService:
         outputs: List[str],
         anchor_nll_score: Optional[float] = None,
         nemotron_judge_score: Optional[float] = None,
+        input_prompts: Optional[List[str]] = None,
     ) -> ShredAttestation:
         """
         Synthesizes the 5 verification tiers to produce an authoritative ShredAttestation.
@@ -180,7 +181,7 @@ class VerificationService:
         passed_canaries = sum(1 for c, _ in canary_results if c)
         canary_accuracy = (passed_canaries / total_canaries) if total_canaries > 0 else 1.0
 
-        measured_in_tokens = 0
+        measured_in_tokens = sum(TokenizerBillingAuthority.count_tokens(p) for p in input_prompts) if input_prompts else 0
         measured_out_tokens = 0
         failure_reasons: List[str] = []
 
@@ -192,7 +193,7 @@ class VerificationService:
                 failure_reasons.append(f"Safety violation: {reason}")
 
         # Tier 2: Canary Audit
-        if total_canaries >= 2 and (total_canaries - passed_canaries) >= 2:
+        if (total_canaries >= 2 and (total_canaries - passed_canaries) >= 2) or (total_canaries > 0 and canary_accuracy < 0.5):
             failure_reasons.append(f"Canary failure rate too high: {passed_canaries}/{total_canaries} passed.")
 
         # Tier 4: NLL Teacher-Forcing Audit

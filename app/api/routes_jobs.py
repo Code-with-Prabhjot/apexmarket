@@ -3,7 +3,7 @@ ApexMarket: Batch Job Submission & Lifecycle API Routes
 Handles batch ingestion, escrow locking, sensitivity gating, and job result querying.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Header, status
@@ -20,6 +20,7 @@ from app.schemas import (
     WorkloadSensitivity,
 )
 from app.services.ledger_service import LedgerService
+from app.services.orchestration_service import orchestration_service
 
 router = APIRouter(prefix="/jobs", tags=["Batch Jobs"])
 scheduler = CapacityAwareScheduler()
@@ -114,7 +115,7 @@ async def create_batch_job(
     )
 
     # 3. Insert batch job record
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     await db.execute(
         text("""
             INSERT INTO batch_jobs (
@@ -160,6 +161,13 @@ async def create_batch_job(
         )
 
     await db.commit()
+
+    # 5. Launch asynchronous end-to-end orchestration pipeline
+    await orchestration_service.create_job_task(
+        job_id=job_id,
+        request=request,
+        client_id=client_id,
+    )
 
     return BatchJobResponse(
         job_id=job_id,
@@ -224,4 +232,40 @@ async def get_batch_job(
         total_makespan_ms=row.total_makespan_ms,
         created_at=row.created_at,
         completed_at=row.completed_at,
+    )
+
+
+@router.get(
+    "/{job_id}/results",
+    response_model=List[PromptResultItem],
+    summary="Get batch job prompt results",
+)
+async def get_batch_job_results(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieves reassembled prompt outputs in original index order."""
+    results = orchestration_service.get_job_results(job_id)
+    if results is not None:
+        return results
+
+    # Verify if job exists in database
+    result = await db.execute(
+        text("SELECT status FROM batch_jobs WHERE job_id = :job_id"),
+        {"job_id": job_id},
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_id} not found.",
+        )
+    if row[0] in ("QUEUED", "RUNNING"):
+        raise HTTPException(
+            status_code=status.HTTP_425_TOO_EARLY,
+            detail=f"Job {job_id} is currently {row[0]}. Results not yet finalized.",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Results for job {job_id} could not be retrieved.",
     )
