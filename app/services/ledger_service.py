@@ -98,22 +98,14 @@ class LedgerService:
         """
         Records a double-entry ledger transaction.
         Enforces idempotency: if the idempotency_key already exists, returns existing entry_id.
+        The insert uses ON CONFLICT so concurrent writers with the same key cannot both insert.
         """
         if amount_micros <= 0:
             raise ValueError(f"amount_micros must be positive: {amount_micros}")
         if debit_account == credit_account:
             raise ValueError(f"Debit and credit accounts must be distinct: {debit_account}")
 
-        existing = await db.execute(
-            text("SELECT entry_id FROM ledger_entries WHERE idempotency_key = :key"),
-            {"key": idempotency_key},
-        )
-        existing_row = existing.fetchone()
-        if existing_row:
-            return existing_row[0]
-
-        entry_id = uuid.uuid4()
-        await db.execute(
+        inserted = await db.execute(
             text("""
                 INSERT INTO ledger_entries (
                     entry_id, idempotency_key, job_id, shred_id,
@@ -122,9 +114,11 @@ class LedgerService:
                     :entry_id, :key, :job_id, :shred_id,
                     :debit_account, :credit_account, :amount_micros, :description
                 )
+                ON CONFLICT (idempotency_key) DO NOTHING
+                RETURNING entry_id
             """),
             {
-                "entry_id": entry_id,
+                "entry_id": uuid.uuid4(),
                 "key": idempotency_key,
                 "job_id": job_id,
                 "shred_id": shred_id,
@@ -134,7 +128,15 @@ class LedgerService:
                 "description": description,
             },
         )
-        return entry_id
+        inserted_row = inserted.fetchone()
+        if inserted_row:
+            return inserted_row[0]
+
+        existing = await db.execute(
+            text("SELECT entry_id FROM ledger_entries WHERE idempotency_key = :key"),
+            {"key": idempotency_key},
+        )
+        return existing.scalar_one()
 
     @staticmethod
     async def lock_client_escrow(
