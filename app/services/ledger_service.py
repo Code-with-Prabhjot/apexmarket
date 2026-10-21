@@ -99,21 +99,48 @@ class LedgerService:
         Records a double-entry ledger transaction.
         Enforces idempotency: if the idempotency_key already exists, returns existing entry_id.
         """
-        if amount_micros <= 0:
-            raise ValueError(f"amount_micros must be positive: {amount_micros}")
-        if debit_account == credit_account:
-            raise ValueError(f"Debit and credit accounts must be distinct: {debit_account}")
+        entry_id = await LedgerService.insert_entry_if_new(
+            db=db,
+            idempotency_key=idempotency_key,
+            debit_account=debit_account,
+            credit_account=credit_account,
+            amount_micros=amount_micros,
+            description=description,
+            job_id=job_id,
+            shred_id=shred_id,
+        )
+        if entry_id is not None:
+            return entry_id
 
         existing = await db.execute(
             text("SELECT entry_id FROM ledger_entries WHERE idempotency_key = :key"),
             {"key": idempotency_key},
         )
-        existing_row = existing.fetchone()
-        if existing_row:
-            return existing_row[0]
+        return existing.scalar_one()
 
-        entry_id = uuid.uuid4()
-        await db.execute(
+    @staticmethod
+    async def insert_entry_if_new(
+        db: AsyncSession,
+        idempotency_key: str,
+        debit_account: str,
+        credit_account: str,
+        amount_micros: int,
+        description: str,
+        job_id: Optional[uuid.UUID] = None,
+        shred_id: Optional[uuid.UUID] = None,
+    ) -> Optional[uuid.UUID]:
+        """
+        Inserts a ledger entry and returns its entry_id, or None if the idempotency_key
+        was already recorded. The insert uses ON CONFLICT so concurrent writers with the
+        same key cannot both insert. Callers apply balance changes only when this returns
+        an entry_id, which keeps balances and the ledger in step on retries.
+        """
+        if amount_micros <= 0:
+            raise ValueError(f"amount_micros must be positive: {amount_micros}")
+        if debit_account == credit_account:
+            raise ValueError(f"Debit and credit accounts must be distinct: {debit_account}")
+
+        inserted = await db.execute(
             text("""
                 INSERT INTO ledger_entries (
                     entry_id, idempotency_key, job_id, shred_id,
@@ -122,9 +149,11 @@ class LedgerService:
                     :entry_id, :key, :job_id, :shred_id,
                     :debit_account, :credit_account, :amount_micros, :description
                 )
+                ON CONFLICT (idempotency_key) DO NOTHING
+                RETURNING entry_id
             """),
             {
-                "entry_id": entry_id,
+                "entry_id": uuid.uuid4(),
                 "key": idempotency_key,
                 "job_id": job_id,
                 "shred_id": shred_id,
@@ -134,7 +163,8 @@ class LedgerService:
                 "description": description,
             },
         )
-        return entry_id
+        inserted_row = inserted.fetchone()
+        return inserted_row[0] if inserted_row else None
 
     @staticmethod
     async def lock_client_escrow(
@@ -147,7 +177,9 @@ class LedgerService:
         Acquires row-level lock on client record with SELECT ... FOR UPDATE.
         Verifies balance and hourly circuit breaker, transfers micro-dollars
         from available_balance_micros to locked_escrow_micros, and writes ledger entry.
+        A retry for a job whose escrow is already locked returns True without moving funds again.
         """
+        idempotency_key = f"escrow_lock:{job_id}"
         result = await db.execute(
             text("""
                 SELECT available_balance_micros, hourly_spend_limit_micros
@@ -161,6 +193,14 @@ class LedgerService:
         if not client:
             raise ValueError(f"Client {client_id} not found.")
 
+        # The client row lock serializes retries for the same job, so this check cannot race.
+        already_locked = await db.execute(
+            text("SELECT 1 FROM ledger_entries WHERE idempotency_key = :key"),
+            {"key": idempotency_key},
+        )
+        if already_locked.fetchone():
+            return True
+
         available, hourly_limit = client.available_balance_micros, client.hourly_spend_limit_micros
 
         if available < required_escrow_micros:
@@ -168,9 +208,24 @@ class LedgerService:
                 f"Insufficient funds: available {available} micros < required {required_escrow_micros} micros."
             )
 
-        if required_escrow_micros > hourly_limit:
+        # Rolling one-hour circuit breaker: escrow reserved in the last hour plus this job.
+        # Reservations count in full even if partly refunded later, which keeps the cap conservative.
+        spent_last_hour = await db.execute(
+            text("""
+                SELECT COALESCE(SUM(amount_micros), 0)
+                FROM ledger_entries
+                WHERE credit_account = :escrow_account
+                  AND idempotency_key LIKE 'escrow_lock:%'
+                  AND created_at > NOW() - INTERVAL '1 hour'
+            """),
+            {"escrow_account": f"client_escrow:{client_id}"},
+        )
+        reserved_last_hour = int(spent_last_hour.scalar_one())
+
+        if reserved_last_hour + required_escrow_micros > hourly_limit:
             raise ValueError(
-                f"Hourly spend limit exceeded: required {required_escrow_micros} micros > limit {hourly_limit} micros."
+                f"Hourly spend limit exceeded: {reserved_last_hour} micros reserved in the last hour "
+                f"+ required {required_escrow_micros} micros > limit {hourly_limit} micros."
             )
 
         # Move available -> locked
@@ -185,7 +240,6 @@ class LedgerService:
         )
 
         # Record double-entry transaction
-        idempotency_key = f"escrow_lock:{job_id}"
         await LedgerService.record_entry(
             db=db,
             idempotency_key=idempotency_key,
@@ -210,8 +264,25 @@ class LedgerService:
         """
         Credits node earnings after successful 5-tier shred verification.
         Debits client_escrow, credits node_probation or node_withdrawable.
+        The ledger entry is written first; a repeat credit for the same shred is a no-op.
         """
         if shred_cost_micros <= 0:
+            return
+
+        target_column = "pending_probation_micros" if is_probation else "withdrawable_micros"
+        target_account = f"node_probation:{node_id}" if is_probation else f"node_withdrawable:{node_id}"
+
+        entry_id = await LedgerService.insert_entry_if_new(
+            db=db,
+            idempotency_key=f"shred_credit:{shred_id}:{node_id}",
+            debit_account=f"client_escrow:{client_id}",
+            credit_account=target_account,
+            amount_micros=shred_cost_micros,
+            description=f"Verified shred payout for {shred_id} on node {node_id}",
+            job_id=job_id,
+            shred_id=shred_id,
+        )
+        if entry_id is None:
             return
 
         # Deduct from client's locked escrow
@@ -225,9 +296,6 @@ class LedgerService:
         )
 
         # Credit compute node
-        target_column = "pending_probation_micros" if is_probation else "withdrawable_micros"
-        target_account = f"node_probation:{node_id}" if is_probation else f"node_withdrawable:{node_id}"
-
         await db.execute(
             text(f"""
                 UPDATE compute_nodes
@@ -235,19 +303,6 @@ class LedgerService:
                 WHERE node_id = :node_id
             """),
             {"amount": shred_cost_micros, "node_id": node_id},
-        )
-
-        # Record ledger entry
-        idempotency_key = f"shred_credit:{shred_id}:{node_id}"
-        await LedgerService.record_entry(
-            db=db,
-            idempotency_key=idempotency_key,
-            debit_account=f"client_escrow:{client_id}",
-            credit_account=target_account,
-            amount_micros=shred_cost_micros,
-            description=f"Verified shred payout for {shred_id} on node {node_id}",
-            job_id=job_id,
-            shred_id=shred_id,
         )
 
     @staticmethod
@@ -261,29 +316,43 @@ class LedgerService:
     ) -> Dict[str, int]:
         """
         Finalizes batch job accounting:
-          1. Retains platform take-rate fee on net verified savings.
+          1. Retains platform take-rate fee on net verified savings, taken from the
+             job's unused escrow and capped by it so the client never pays more than
+             they reserved for the job.
           2. Refunds remaining unspent escrow back to client's available balance.
         """
-        unused_micros = total_reserved_micros - actual_settled_micros
+        unspent_micros = total_reserved_micros - actual_settled_micros
         gross_savings, platform_fee = compute_net_savings_and_fee(
             baseline_cost_micros=baseline_cost_micros,
             actual_cost_micros=actual_settled_micros,
             take_rate_bps=settings.PLATFORM_TAKE_RATE_BPS,
         )
+        platform_fee = min(platform_fee, max(unspent_micros, 0))
+        unused_micros = unspent_micros - platform_fee
+
+        if platform_fee > 0:
+            fee_entry_id = await LedgerService.insert_entry_if_new(
+                db=db,
+                idempotency_key=f"platform_fee:{job_id}",
+                debit_account=f"client_escrow:{client_id}",
+                credit_account="platform_revenue",
+                amount_micros=platform_fee,
+                description=f"Platform take-rate on savings for job {job_id}",
+                job_id=job_id,
+            )
+            if fee_entry_id is not None:
+                await db.execute(
+                    text("""
+                        UPDATE clients
+                        SET locked_escrow_micros = locked_escrow_micros - :fee
+                        WHERE client_id = :client_id
+                    """),
+                    {"fee": platform_fee, "client_id": client_id},
+                )
 
         # Adjust client escrow and available balances
         if unused_micros > 0:
-            await db.execute(
-                text("""
-                    UPDATE clients
-                    SET locked_escrow_micros = locked_escrow_micros - :unused,
-                        available_balance_micros = available_balance_micros + :unused
-                    WHERE client_id = :client_id
-                """),
-                {"unused": unused_micros, "client_id": client_id},
-            )
-
-            await LedgerService.record_entry(
+            refund_entry_id = await LedgerService.insert_entry_if_new(
                 db=db,
                 idempotency_key=f"escrow_refund:{job_id}",
                 debit_account=f"client_escrow:{client_id}",
@@ -292,17 +361,16 @@ class LedgerService:
                 description=f"Unused escrow release for job {job_id}",
                 job_id=job_id,
             )
-
-        if platform_fee > 0:
-            await LedgerService.record_entry(
-                db=db,
-                idempotency_key=f"platform_fee:{job_id}",
-                debit_account=f"client_available:{client_id}",
-                credit_account="platform_revenue",
-                amount_micros=platform_fee,
-                description=f"Platform 10% take-rate on savings for job {job_id}",
-                job_id=job_id,
-            )
+            if refund_entry_id is not None:
+                await db.execute(
+                    text("""
+                        UPDATE clients
+                        SET locked_escrow_micros = locked_escrow_micros - :unused,
+                            available_balance_micros = available_balance_micros + :unused
+                        WHERE client_id = :client_id
+                    """),
+                    {"unused": unused_micros, "client_id": client_id},
+                )
 
         return {
             "reserved_micros": total_reserved_micros,
