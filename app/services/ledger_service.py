@@ -301,15 +301,39 @@ class LedgerService:
     ) -> Dict[str, int]:
         """
         Finalizes batch job accounting:
-          1. Retains platform take-rate fee on net verified savings.
+          1. Retains platform take-rate fee on net verified savings, taken from the
+             job's unused escrow and capped by it so the client never pays more than
+             they reserved for the job.
           2. Refunds remaining unspent escrow back to client's available balance.
         """
-        unused_micros = total_reserved_micros - actual_settled_micros
+        unspent_micros = total_reserved_micros - actual_settled_micros
         gross_savings, platform_fee = compute_net_savings_and_fee(
             baseline_cost_micros=baseline_cost_micros,
             actual_cost_micros=actual_settled_micros,
             take_rate_bps=settings.PLATFORM_TAKE_RATE_BPS,
         )
+        platform_fee = min(platform_fee, max(unspent_micros, 0))
+        unused_micros = unspent_micros - platform_fee
+
+        if platform_fee > 0:
+            fee_entry_id = await LedgerService.insert_entry_if_new(
+                db=db,
+                idempotency_key=f"platform_fee:{job_id}",
+                debit_account=f"client_escrow:{client_id}",
+                credit_account="platform_revenue",
+                amount_micros=platform_fee,
+                description=f"Platform take-rate on savings for job {job_id}",
+                job_id=job_id,
+            )
+            if fee_entry_id is not None:
+                await db.execute(
+                    text("""
+                        UPDATE clients
+                        SET locked_escrow_micros = locked_escrow_micros - :fee
+                        WHERE client_id = :client_id
+                    """),
+                    {"fee": platform_fee, "client_id": client_id},
+                )
 
         # Adjust client escrow and available balances
         if unused_micros > 0:
@@ -332,17 +356,6 @@ class LedgerService:
                     """),
                     {"unused": unused_micros, "client_id": client_id},
                 )
-
-        if platform_fee > 0:
-            await LedgerService.record_entry(
-                db=db,
-                idempotency_key=f"platform_fee:{job_id}",
-                debit_account=f"client_available:{client_id}",
-                credit_account="platform_revenue",
-                amount_micros=platform_fee,
-                description=f"Platform 10% take-rate on savings for job {job_id}",
-                job_id=job_id,
-            )
 
         return {
             "reserved_micros": total_reserved_micros,
