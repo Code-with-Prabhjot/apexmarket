@@ -208,9 +208,24 @@ class LedgerService:
                 f"Insufficient funds: available {available} micros < required {required_escrow_micros} micros."
             )
 
-        if required_escrow_micros > hourly_limit:
+        # Rolling one-hour circuit breaker: escrow reserved in the last hour plus this job.
+        # Reservations count in full even if partly refunded later, which keeps the cap conservative.
+        spent_last_hour = await db.execute(
+            text("""
+                SELECT COALESCE(SUM(amount_micros), 0)
+                FROM ledger_entries
+                WHERE credit_account = :escrow_account
+                  AND idempotency_key LIKE 'escrow_lock:%'
+                  AND created_at > NOW() - INTERVAL '1 hour'
+            """),
+            {"escrow_account": f"client_escrow:{client_id}"},
+        )
+        reserved_last_hour = int(spent_last_hour.scalar_one())
+
+        if reserved_last_hour + required_escrow_micros > hourly_limit:
             raise ValueError(
-                f"Hourly spend limit exceeded: required {required_escrow_micros} micros > limit {hourly_limit} micros."
+                f"Hourly spend limit exceeded: {reserved_last_hour} micros reserved in the last hour "
+                f"+ required {required_escrow_micros} micros > limit {hourly_limit} micros."
             )
 
         # Move available -> locked
