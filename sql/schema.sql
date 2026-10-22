@@ -168,9 +168,13 @@ CREATE TABLE IF NOT EXISTS payout_items (
     node_id TEXT NOT NULL REFERENCES compute_nodes(node_id),
     amount_paid_micros BIGINT NOT NULL CHECK (amount_paid_micros >= 0), -- Rounded down to whole cents
     remainder_carried_micros BIGINT NOT NULL CHECK (remainder_carried_micros >= 0), -- Sub-cent remainder
+    payout_receiver_email TEXT,
     paypal_item_id TEXT,
     item_status TEXT NOT NULL DEFAULT 'PENDING'
 );
 
 CREATE INDEX IF NOT EXISTS idx_payout_items_batch_id ON payout_items(batch_id);
 CREATE INDEX IF NOT EXISTS idx_payout_items_node_id ON payout_items(node_id);
+
+-- Snapshot payout destinations so a retry never changes a reserved batch payload.
+ALTER TABLE payout_items ADD COLUMN IF NOT EXISTS payout_receiver_email TEXT;

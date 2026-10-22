@@ -1,0 +1,171 @@
+1
+00:00:00,000 --> 00:00:06,630
+This is ApexMarket Mission Control: one place to route batch inference, inspect verification, and manage exact settlement.
+
+2
+00:00:06,630 --> 00:00:09,750
+This walkthrough uses the explicitly labeled simulation mode.
+
+3
+00:00:09,750 --> 00:00:15,990
+The dashboard also connects to the FastAPI engine through live WebSocket telemetry and server-side API routes.
+
+4
+00:00:15,990 --> 00:00:19,500
+The dark, translucent interface keeps operational decisions in focus.
+
+5
+00:00:20,000 --> 00:00:23,611
+Every new session starts with the confidential air-gap switched on.
+
+6
+00:00:23,611 --> 00:00:27,583
+New workloads are classified confidential and stay on the trusted anchor.
+
+7
+00:00:27,583 --> 00:00:30,472
+Spot providers are visibly isolated in the topology.
+
+8
+00:00:30,472 --> 00:00:34,444
+This control sets the sensitivity sent with the actual batch request.
+
+9
+00:00:34,444 --> 00:00:39,500
+A running batch keeps its original classification, so its privacy policy cannot change midway.
+
+10
+00:00:40,000 --> 00:00:44,609
+Batch submission accepts prompt templates, a prompt count, and a maximum spending budget.
+
+11
+00:00:44,609 --> 00:00:49,573
+The interface validates the request before submission, while the engine enforces its own limits.
+
+12
+00:00:49,573 --> 00:00:53,827
+In this example, we switch to synthetic data and submit fifty prompts.
+
+13
+00:00:53,827 --> 00:00:57,018
+Jobs show their classification, completion progress, and verified cost.
+
+14
+00:00:57,018 --> 00:00:59,500
+Completed results download in original prompt order.
+
+15
+00:01:00,000 --> 00:01:05,288
+With confidential routing disabled for synthetic work, the topology connects the central router to eligible providers.
+
+16
+00:01:05,288 --> 00:01:07,602
+Curved edges animate while requests are active.
+
+17
+00:01:07,602 --> 00:01:11,898
+Their widths follow reported throughput, or active request counts when throughput is unavailable.
+
+18
+00:01:11,898 --> 00:01:16,856
+Green identifies healthy routing, amber highlights slow responses, and red marks failed or slashed providers.
+
+19
+00:01:16,856 --> 00:01:19,500
+Live telemetry reconnects automatically if the connection drops.
+
+20
+00:01:20,000 --> 00:01:24,141
+The chaos control injects degraded output into the configured local mock provider.
+
+21
+00:01:24,141 --> 00:01:30,697
+In this simulated walkthrough, the affected node turns red and the verification panel illustrates the rejection and anchor fallback.
+
+22
+00:01:30,697 --> 00:01:34,493
+Live mode reads stored shred attestations rather than inventing successful checks.
+
+23
+00:01:34,493 --> 00:01:40,014
+The five-tier design covers local token billing, rotated canaries, anchor sampling, logprob scoring, and semantic judgment.
+
+24
+00:01:40,014 --> 00:01:41,739
+Failed work earns no payout.
+
+25
+00:01:41,739 --> 00:01:44,500
+Restoring the mock provider is a single action.
+
+26
+00:01:45,000 --> 00:01:48,542
+The cost chart reads the repository benchmark CSV directly and refreshes periodically.
+
+27
+00:01:48,542 --> 00:01:58,283
+Across the three recorded runs, the single-provider cost is zero point zero zero one three six one dollars, and the verified router cost is zero point zero zero zero nine two three dollars.
+
+28
+00:01:58,283 --> 00:02:00,940
+That is a thirty-two point one eight percent difference.
+
+29
+00:02:00,940 --> 00:02:05,958
+The Batch API bar is explicitly a configurable price scenario unless measured Batch API rows are added.
+
+30
+00:02:05,958 --> 00:02:09,500
+The source CSV does not record whether those runs used live credentials.
+
+31
+00:02:10,000 --> 00:02:12,578
+Switch to makespan to inspect the time tradeoff.
+
+32
+00:02:12,578 --> 00:02:19,667
+The recorded average is about three point two nine seconds for the baseline and three point nine seconds for the verified route.
+
+33
+00:02:19,667 --> 00:02:20,956
+Individual runs remain selectable.
+
+34
+00:02:20,956 --> 00:02:24,500
+Asynchronous Batch API delivery is distinguished from the recorded synchronous measurements.
+
+35
+00:02:25,000 --> 00:02:29,712
+The ledger display preserves six decimal places and shows the underlying integer micro-dollar balance.
+
+36
+00:02:29,712 --> 00:02:32,067
+Probation earnings stay separate from withdrawable funds.
+
+37
+00:02:32,067 --> 00:02:37,788
+Each node's payable amount rounds down to whole cents, while its sub-cent remainder remains in the ledger.
+
+38
+00:02:37,788 --> 00:02:42,500
+This prevents tiny batches from losing value through floating-point rounding or repeated payout fees.
+
+39
+00:02:43,000 --> 00:02:45,797
+Settle Now submits whole-cent node balances and keeps the remainder.
+
+40
+00:02:45,797 --> 00:02:49,992
+Here, the simulation moves two dollars and ninety-eight cents to pending without moving external money.
+
+41
+00:02:49,992 --> 00:02:53,347
+The sandbox backend uses durable reservations, deterministic batch identifiers, and idempotent reconciliation.
+
+42
+00:02:53,347 --> 00:02:56,144
+Fifty backend tests passed, including payout retries and competing reservations.
+
+43
+00:02:56,144 --> 00:02:59,500
+ApexMarket: route intelligently, verify every shred, and pay only for verified work.
