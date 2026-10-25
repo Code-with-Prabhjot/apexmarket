@@ -94,6 +94,22 @@ class Settings(BaseSettings):
         default=7,
         description="Rolling escrow hold in days for new untrusted spot nodes",
     )
+    MIN_TOPUP_MICROS: int = Field(
+        default=20_000_000,  # $20.00 keeps the PayPal checkout fee small relative to the deposit
+        description="Smallest prepaid balance top-up a client can make",
+    )
+    MAX_TOPUP_MICROS: int = Field(
+        default=500_000_000,  # $500.00
+        description="Largest single prepaid balance top-up a client can make",
+    )
+    TOPUP_RETURN_URL: str = Field(
+        default="http://localhost:3000/billing/return",
+        description="Where PayPal sends the buyer after approving a top-up",
+    )
+    TOPUP_CANCEL_URL: str = Field(
+        default="http://localhost:3000/billing/cancel",
+        description="Where PayPal sends the buyer after cancelling a top-up",
+    )
     PLATFORM_TAKE_RATE_BPS: int = Field(
         default=1000,  # 10.00% (1000 basis points)
         description="ApexMarket platform take rate on net verified cost savings",
