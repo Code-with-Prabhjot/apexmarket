@@ -20,7 +20,7 @@ from sqlalchemy.pool import NullPool
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "")
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "sql" / "schema.sql"
 LEDGER_TABLES = (
-    "payout_items, payout_batches, ledger_entries, job_shreds, batch_jobs, compute_nodes, clients"
+    "paypal_topups, payout_items, payout_batches, ledger_entries, job_shreds, batch_jobs, compute_nodes, clients"
 )
 
 _schema_applied = False
