@@ -99,6 +99,15 @@ When calculating node disbursements:
 3. **Conservation Invariant:**
    $$\text{payable\_micros} + \text{remainder\_micros} \equiv \text{balance\_micros}$$
 
+### Money Flow: Top-Ups, Probation & Payouts (PayPal Sandbox)
+1. **Prepaid top-ups** (`/api/v1/billing`, client `X-API-Key`):
+   * `POST /topups` with `{"amount_micros": 20000000}` returns an `approve_url`. The buyer approves in PayPal, then `POST /topups/{topup_id}/capture` credits `available_balance_micros`.
+   * The first capture saves the buyer's PayPal account (vaulting). After that, `POST /topups/auto` with an `Idempotency-Key` header charges it without the buyer present.
+   * `GET /balance` shows available and locked (escrow) balances.
+   * Limits: `MIN_TOPUP_MICROS` ($20) to `MAX_TOPUP_MICROS` ($500), whole cents only. A capture is credited only if PayPal reports it `COMPLETED` for exactly the recorded amount and top-up, and at most once per top-up.
+2. **Probation release:** earnings of `PROBATION_SPOT` nodes are held in `pending_probation_micros` for `PROBATION_ESCROW_DAYS`. `POST /api/v1/ledger/probation/release` (header `X-Admin-Key`) moves matured credits to `withdrawable_micros`; each credit is released once.
+3. **Payouts:** `POST /api/v1/ledger/settle-now` pays withdrawable balances in one PayPal batch; `POST /api/v1/ledger/payouts/{batch_id}/reconcile` applies PayPal's final per-item results.
+
 ---
 
 ## 4. Modular Repository Architecture

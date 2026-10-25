@@ -285,6 +285,61 @@ class LedgerService:
         return True
 
     @staticmethod
+    async def release_matured_probation(
+        db: AsyncSession,
+        hold_days: int,
+        batch_limit: int = 1000,
+    ) -> Dict[str, int]:
+        """
+        Moves probation earnings older than hold_days from pending_probation_micros to
+        withdrawable_micros. Each probation credit is released at most once, keyed by its
+        ledger entry, so overlapping or repeated runs cannot double-release.
+        """
+        matured = await db.execute(
+            text("""
+                SELECT e.entry_id, e.credit_account, e.amount_micros
+                FROM ledger_entries e
+                WHERE e.credit_account LIKE 'node_probation:%'
+                  AND e.created_at <= NOW() - make_interval(days => :hold_days)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ledger_entries r
+                      WHERE r.idempotency_key = 'probation_release:' || e.entry_id::text
+                  )
+                ORDER BY e.created_at
+                LIMIT :batch_limit
+            """),
+            {"hold_days": hold_days, "batch_limit": batch_limit},
+        )
+
+        released_entries = 0
+        released_micros = 0
+        for entry in matured.fetchall():
+            node_id = entry.credit_account.split(":", 1)[1]
+            release_id = await LedgerService.insert_entry_if_new(
+                db=db,
+                idempotency_key=f"probation_release:{entry.entry_id}",
+                debit_account=entry.credit_account,
+                credit_account=f"node_withdrawable:{node_id}",
+                amount_micros=entry.amount_micros,
+                description=f"Probation hold of {hold_days} days ended for node {node_id}",
+            )
+            if release_id is None:
+                continue
+            await db.execute(
+                text("""
+                    UPDATE compute_nodes
+                    SET pending_probation_micros = pending_probation_micros - :amount,
+                        withdrawable_micros = withdrawable_micros + :amount
+                    WHERE node_id = :node_id
+                """),
+                {"amount": entry.amount_micros, "node_id": node_id},
+            )
+            released_entries += 1
+            released_micros += entry.amount_micros
+
+        return {"released_entries": released_entries, "released_micros": released_micros}
+
+    @staticmethod
     async def credit_node_verified_shred(
         db: AsyncSession,
         client_id: uuid.UUID,
