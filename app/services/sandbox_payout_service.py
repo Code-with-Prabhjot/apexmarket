@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.services.ledger_service import LedgerService, calculate_subcent_split, micros_to_usd_str
+from app.services.ledger_service import LedgerService, calculate_subcent_split, micros_to_usd_str, usd_to_micros
 
 SANDBOX_ORIGIN = "https://api-m.sandbox.paypal.com"
 FAILED_ITEM_STATUSES = {"FAILED", "RETURNED", "REFUNDED", "REVERSED", "DENIED", "CANCELED"}
@@ -124,10 +124,14 @@ async def reconcile_batch(db: AsyncSession, batch_id: uuid.UUID, settings: Setti
     headers = {"Authorization": f"Bearer {await access_token(client, settings)}"}
     remote_items = []
     page = 1
+    fee_micros = None
     while True:
         response = await client.get(f"{SANDBOX_ORIGIN}/v1/payments/payouts/{batch['paypal_batch_id']}", headers=headers, params={"page": page, "page_size": 1000})
         response.raise_for_status()
         data = response.json()
+        fee_value = ((data.get("batch_header") or {}).get("fees") or {}).get("value")
+        if fee_micros is None and fee_value is not None:
+            fee_micros = usd_to_micros(fee_value)  # PayPal's payout fee, paid by the platform
         remote_items.extend(data.get("items", []))
         if page >= int(data.get("total_pages", 1)):
             break
@@ -162,6 +166,10 @@ async def reconcile_batch(db: AsyncSession, batch_id: uuid.UUID, settings: Setti
         await db.execute(text("UPDATE payout_items SET item_status = :status, paypal_item_id = :paypal WHERE item_id = :item"), {"status": outcome, "paypal": remote.get("payout_item_id"), "item": item_id})
     statuses = (await db.execute(text("SELECT item_status FROM payout_items WHERE batch_id = :id"), {"id": batch_id})).scalars().all()
     state = "SUBMITTED_PENDING" if "PENDING" in statuses else "FAILED_REVERSED" if "FAILED" in statuses else "COMPLETED"
-    await db.execute(text("UPDATE payout_batches SET status = CAST(:status AS payout_batch_status), updated_at = NOW() WHERE batch_id = :id"), {"status": state, "id": batch_id})
+    await db.execute(text("""
+        UPDATE payout_batches SET status = CAST(:status AS payout_batch_status),
+            total_fee_micros = COALESCE(:fee, total_fee_micros), updated_at = NOW()
+        WHERE batch_id = :id
+    """), {"status": state, "fee": fee_micros, "id": batch_id})
     await db.commit()
     return {**batch, "status": state}

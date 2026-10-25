@@ -106,7 +106,8 @@ When calculating node disbursements:
    * `GET /balance` shows available and locked (escrow) balances.
    * Limits: `MIN_TOPUP_MICROS` ($20) to `MAX_TOPUP_MICROS` ($500), whole cents only. A capture is credited only if PayPal reports it `COMPLETED` for exactly the recorded amount and top-up, and at most once per top-up.
 2. **Probation release:** earnings of `PROBATION_SPOT` nodes are held in `pending_probation_micros` for `PROBATION_ESCROW_DAYS`. `POST /api/v1/ledger/probation/release` (header `X-Admin-Key`) moves matured credits to `withdrawable_micros`; each credit is released once.
-3. **Payouts:** `POST /api/v1/ledger/settle-now` pays withdrawable balances in one PayPal batch; `POST /api/v1/ledger/payouts/{batch_id}/reconcile` applies PayPal's final per-item results.
+3. **Payouts:** `POST /api/v1/ledger/settle-now` pays withdrawable balances in one PayPal batch; `POST /api/v1/ledger/payouts/{batch_id}/reconcile` applies PayPal's final per-item results and records PayPal's payout fee in `total_fee_micros`.
+4. **Webhooks:** register `POST /api/v1/webhooks/paypal` in the PayPal developer dashboard and set `PAYPAL_WEBHOOK_ID`. Each event is verified with PayPal's `verify-webhook-signature` API before use. `PAYMENT.CAPTURE.COMPLETED` credits a top-up whose capture response was lost, and `PAYMENT.PAYOUTS*` events reconcile the payout batch. The handler re-fetches current state from PayPal, so replayed events change nothing.
 
 ---
 
