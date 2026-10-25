@@ -284,3 +284,21 @@ async def test_settling_an_aborted_job_refunds_exactly_what_is_left(db, make_cli
     assert await client_balances(db, client_id) == (9_000_000, 0)
     assert await node_balances(db, node_id) == (1_000_000, 0)
     assert await LedgerService.job_escrow_remaining(db, client_id, job_id) == 0
+
+
+async def test_shred_cost_over_the_job_budget_is_covered_by_platform_reserve(db, make_client, make_node):
+    client_id = await make_client(available_balance_micros=10_000_000)
+    node_id = await make_node()
+    job_id = await lock_escrow_for_new_job(db, client_id, 1_000_000)
+    shred_id = await insert_shred(db, job_id, node_id)
+
+    for _ in range(2):  # second call simulates a retry
+        await LedgerService.credit_node_verified_shred(
+            db, client_id, job_id, shred_id, node_id, shred_cost_micros=1_500_000, is_probation=False
+        )
+        await db.commit()
+
+    assert await client_balances(db, client_id) == (9_000_000, 0)  # client pays exactly its $1.00 ceiling
+    assert await node_balances(db, node_id) == (1_500_000, 0)       # node is paid in full
+    assert await ledger_net(db, "platform_reserve") == -500_000
+    assert await ledger_net(db, f"node_withdrawable:{node_id}") == 1_500_000

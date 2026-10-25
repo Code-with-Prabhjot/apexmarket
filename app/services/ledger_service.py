@@ -264,36 +264,67 @@ class LedgerService:
         """
         Credits node earnings after successful 5-tier shred verification.
         Debits client_escrow, credits node_probation or node_withdrawable.
-        The ledger entry is written first; a repeat credit for the same shred is a no-op.
+        The client pays at most the escrow still held for the job (their budget ceiling);
+        any overrun is paid from platform_reserve, so the node is always paid in full.
+        A repeat credit for the same shred is a no-op.
         """
         if shred_cost_micros <= 0:
             return
 
         target_column = "pending_probation_micros" if is_probation else "withdrawable_micros"
         target_account = f"node_probation:{node_id}" if is_probation else f"node_withdrawable:{node_id}"
+        client_key = f"shred_credit:{shred_id}:{node_id}"
+        reserve_key = f"shred_overrun:{shred_id}:{node_id}"
 
-        entry_id = await LedgerService.insert_entry_if_new(
-            db=db,
-            idempotency_key=f"shred_credit:{shred_id}:{node_id}",
-            debit_account=f"client_escrow:{client_id}",
-            credit_account=target_account,
-            amount_micros=shred_cost_micros,
-            description=f"Verified shred payout for {shred_id} on node {node_id}",
-            job_id=job_id,
-            shred_id=shred_id,
-        )
-        if entry_id is None:
-            return
-
-        # Deduct from client's locked escrow
+        # Lock the client row so concurrent credits for this client see each other's
+        # escrow deductions, then skip shreds that were already credited.
         await db.execute(
-            text("""
-                UPDATE clients
-                SET locked_escrow_micros = locked_escrow_micros - :amount
-                WHERE client_id = :client_id
-            """),
-            {"amount": shred_cost_micros, "client_id": client_id},
+            text("SELECT client_id FROM clients WHERE client_id = :client_id FOR UPDATE"),
+            {"client_id": client_id},
         )
+        for key in (client_key, reserve_key):
+            already = await db.execute(
+                text("SELECT 1 FROM ledger_entries WHERE idempotency_key = :key"),
+                {"key": key},
+            )
+            if already.fetchone():
+                return
+
+        client_pays = min(shred_cost_micros, await LedgerService.job_escrow_remaining(db, client_id, job_id))
+        reserve_pays = shred_cost_micros - client_pays
+
+        if client_pays > 0:
+            await LedgerService.insert_entry_if_new(
+                db=db,
+                idempotency_key=client_key,
+                debit_account=f"client_escrow:{client_id}",
+                credit_account=target_account,
+                amount_micros=client_pays,
+                description=f"Verified shred payout for {shred_id} on node {node_id}",
+                job_id=job_id,
+                shred_id=shred_id,
+            )
+            # Deduct from client's locked escrow
+            await db.execute(
+                text("""
+                    UPDATE clients
+                    SET locked_escrow_micros = locked_escrow_micros - :amount
+                    WHERE client_id = :client_id
+                """),
+                {"amount": client_pays, "client_id": client_id},
+            )
+
+        if reserve_pays > 0:
+            await LedgerService.insert_entry_if_new(
+                db=db,
+                idempotency_key=reserve_key,
+                debit_account="platform_reserve",
+                credit_account=target_account,
+                amount_micros=reserve_pays,
+                description=f"Platform covers cost over the job's budget for shred {shred_id} on node {node_id}",
+                job_id=job_id,
+                shred_id=shred_id,
+            )
 
         # Credit compute node
         await db.execute(

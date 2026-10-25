@@ -48,23 +48,23 @@ class FakeProvider:
         return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
 
 
-async def submit_job(db, client_id, sensitivity: WorkloadSensitivity, prompt_count: int) -> tuple[uuid.UUID, BatchJobCreateRequest]:
+async def submit_job(db, client_id, sensitivity: WorkloadSensitivity, prompt_count: int, ceiling: int = CEILING) -> tuple[uuid.UUID, BatchJobCreateRequest]:
     """Locks escrow and records the job the way POST /api/v1/jobs does."""
     request = BatchJobCreateRequest(
         sensitivity=sensitivity,
         prompts=[PromptItem(prompt_index=i, content=f"Summarise record {i}.") for i in range(prompt_count)],
         max_tokens_per_prompt=64,
-        max_cost_ceiling_micros=CEILING,
+        max_cost_ceiling_micros=ceiling,
     )
     job_id = uuid.uuid4()
-    await LedgerService.lock_client_escrow(db, client_id, CEILING, job_id)
+    await LedgerService.lock_client_escrow(db, client_id, ceiling, job_id)
     await db.execute(
         text("""
             INSERT INTO batch_jobs (job_id, client_id, sensitivity, total_prompts, max_tokens_per_prompt,
                                     max_cost_ceiling_micros, reserved_escrow_micros)
             VALUES (:job_id, :client_id, :sensitivity, :count, 64, :ceiling, :ceiling)
         """),
-        {"job_id": job_id, "client_id": client_id, "sensitivity": sensitivity.value, "count": prompt_count, "ceiling": CEILING},
+        {"job_id": job_id, "client_id": client_id, "sensitivity": sensitivity.value, "count": prompt_count, "ceiling": ceiling},
     )
     await db.commit()
     return job_id, request
@@ -207,3 +207,22 @@ async def test_job_failing_after_paid_shreds_releases_the_rest_of_its_escrow(db,
     assert money["locked"] == 0
     assert money["nodes"] > 0  # verified shreds stay paid
     assert money["available"] + money["nodes"] + money["platform_revenue"] == INITIAL_BALANCE
+
+
+async def test_job_costing_more_than_its_ceiling_completes_and_client_pays_only_the_ceiling(db, make_client, make_node):
+    client_id = await make_client(available_balance_micros=INITIAL_BALANCE)
+    await make_node(trust_tier="ANCHOR")
+    tiny_ceiling = 100  # $0.0001, far below what 60 prompts cost
+    job_id, request = await submit_job(db, client_id, WorkloadSensitivity.CONFIDENTIAL, prompt_count=60, ceiling=tiny_ceiling)
+
+    await run_job(db, client_id, job_id, request, FakeProvider())
+
+    assert (await db.execute(text("SELECT status FROM batch_jobs WHERE job_id = :id"), {"id": job_id})).scalar_one() == "COMPLETED"
+    money = await money_snapshot(db, client_id)
+    assert money["locked"] == 0
+    assert money["available"] == INITIAL_BALANCE - tiny_ceiling
+    reserve_paid = (await db.execute(text(
+        "SELECT COALESCE(SUM(amount_micros), 0) FROM ledger_entries WHERE debit_account = 'platform_reserve'"
+    ))).scalar_one()
+    assert reserve_paid > 0
+    assert money["nodes"] == tiny_ceiling + reserve_paid  # node paid in full: client's ceiling + platform reserve
