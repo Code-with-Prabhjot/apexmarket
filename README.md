@@ -204,3 +204,16 @@ timestamp,run_id,route_type,prompt_count,effective_requests_with_audit,total_cos
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 Interactive API documentation is accessible at `http://127.0.0.1:8000/docs`.
+
+### 5.6 Mission Control Dashboard (Engineer 4)
+
+The Next.js 14 dashboard lives in [`frontend/`](frontend/README.md). Start it with:
+
+```sh
+cd frontend
+npm ci
+cp .env.example .env.local
+npm run dev
+```
+
+It connects to the Python engine on port 8000 by default. Confidential routing starts ON. Live WebSocket topology, batch submission/progress/results, verification evidence, CSV benchmark comparisons, authenticated mock-provider chaos, and idempotent PayPal Sandbox settlement are implemented. Set `NEXT_PUBLIC_MOCK_FALLBACK=true` explicitly for the labeled offline walkthrough. See the frontend guide for live settings, admin controls, validation, and the [three-minute narrated demo](docs/demo/apexmarket-mission-control.mp4).

@@ -11,6 +11,7 @@ from app.api.routes_jobs import router as jobs_router
 from app.api.routes_nodes import router as nodes_router
 from app.api.routes_telemetry import router as telemetry_router
 from app.api.routes_ws import router as ws_router
+from app.api.routes_mission_control import router as mission_control_router
 from app.config import get_settings
 from app.database import close_database_connections
 
@@ -45,6 +46,7 @@ app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(nodes_router, prefix="/api/v1")
 app.include_router(telemetry_router, prefix="/api/v1")
 app.include_router(ws_router)
+app.include_router(mission_control_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["Health"])

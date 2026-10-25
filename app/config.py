@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO", description="Logging verbosity level")
     HOST: str = Field(default="127.0.0.1", description="FastAPI host binding")
     PORT: int = Field(default=8000, description="FastAPI port binding")
+    ADMIN_API_KEY: str = Field(default="", description="Required for Mission Control sandbox admin actions")
+    DEMO_CHAOS_ENABLED: bool = Field(default=False, description="Explicit opt-in to mutate the local mock provider")
+    DEMO_MOCK_PROVIDER_URL: str = Field(default="http://127.0.0.1:9002", description="Local mock provider chaos target")
 
     # Nebius Token Factory (Reference Anchor & Verification Judge)
     NEBIUS_API_KEY: str = Field(default="", description="Nebius Token Factory API key")
