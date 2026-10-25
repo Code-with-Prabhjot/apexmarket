@@ -154,6 +154,29 @@ async def apply_verified_capture(db: AsyncSession, topup: Dict[str, Any], captur
     )
 
 
+async def store_vault_from_order(db: AsyncSession, client_id: uuid.UUID, order: Dict[str, Any]) -> Optional[str]:
+    """
+    Saves the vault id PayPal returns once the buyer's account is stored (status VAULTED),
+    so later top-ups can be charged without the buyer present. Returns the vault id.
+    """
+    paypal_source = (order.get("payment_source") or {}).get("paypal") or {}
+    vault = (paypal_source.get("attributes") or {}).get("vault") or {}
+    if vault.get("status") != "VAULTED" or not vault.get("id"):
+        return None
+
+    payer_id = paypal_source.get("account_id") or (order.get("payer") or {}).get("payer_id")
+    await db.execute(
+        text("""
+            UPDATE clients
+            SET paypal_vault_id = :vault_id,
+                paypal_payer_id = COALESCE(:payer_id, paypal_payer_id)
+            WHERE client_id = :client_id
+        """),
+        {"vault_id": vault["id"], "payer_id": payer_id, "client_id": client_id},
+    )
+    return vault["id"]
+
+
 def topup_receipt(topup: Dict[str, Any], status: str) -> Dict[str, Any]:
     return {
         "topup_id": topup["topup_id"],
@@ -207,5 +230,6 @@ async def capture_topup(
 
     capture = extract_completed_capture(order, topup_id, topup["amount_micros"])
     await apply_verified_capture(db, topup, capture)
+    await store_vault_from_order(db, client_id, order)
     await db.commit()
     return topup_receipt(topup, "CAPTURED")
