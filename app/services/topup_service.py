@@ -233,3 +233,78 @@ async def capture_topup(
     await store_vault_from_order(db, client_id, order)
     await db.commit()
     return topup_receipt(topup, "CAPTURED")
+
+
+async def charge_vaulted_topup(
+    db: AsyncSession,
+    paypal: PayPalClient,
+    client_id: uuid.UUID,
+    amount_micros: int,
+    idempotency_key: uuid.UUID,
+    settings: Settings,
+) -> Dict[str, Any]:
+    """
+    Charges the client's vaulted PayPal account without the buyer present (for agents
+    that top up their own balance). The caller's idempotency key becomes the topup_id,
+    so a retried call returns the first result instead of charging twice.
+    """
+    require_sandbox(settings)
+    validate_topup_amount(amount_micros, settings)
+
+    vault_id = (
+        await db.execute(
+            text("SELECT paypal_vault_id FROM clients WHERE client_id = :id"),
+            {"id": client_id},
+        )
+    ).scalar_one_or_none()
+    if not vault_id:
+        raise TopUpError("No saved PayPal account; complete one approved top-up first.")
+
+    await db.execute(
+        text("""
+            INSERT INTO paypal_topups (topup_id, client_id, amount_micros, is_vaulted_charge)
+            VALUES (:id, :client_id, :amount, TRUE)
+            ON CONFLICT (topup_id) DO NOTHING
+        """),
+        {"id": idempotency_key, "client_id": client_id, "amount": amount_micros},
+    )
+    await db.commit()
+
+    row = (
+        await db.execute(
+            text("SELECT * FROM paypal_topups WHERE topup_id = :id FOR UPDATE"),
+            {"id": idempotency_key},
+        )
+    ).mappings().one()
+    topup = dict(row)
+    if topup["client_id"] != client_id or not topup["is_vaulted_charge"] or topup["amount_micros"] != amount_micros:
+        raise TopUpError("This idempotency key was already used for a different top-up.")
+    if topup["status"] != "CREATED":
+        await db.commit()
+        return topup_receipt(topup, topup["status"])
+
+    payload = {
+        "intent": "CAPTURE",
+        "purchase_units": build_topup_order(idempotency_key, amount_micros, settings)["purchase_units"],
+        "payment_source": {"paypal": {"vault_id": vault_id}},
+    }
+    order = await paypal.request("POST", "/v2/checkout/orders", json=payload, request_id=f"topup-order:{idempotency_key}")
+    await db.execute(
+        text("UPDATE paypal_topups SET paypal_order_id = :order_id WHERE topup_id = :id"),
+        {"order_id": order["id"], "id": idempotency_key},
+    )
+    topup["paypal_order_id"] = order["id"]
+
+    try:
+        capture = extract_completed_capture(order, idempotency_key, amount_micros)
+    except TopUpError:
+        await db.execute(
+            text("UPDATE paypal_topups SET status = 'FAILED' WHERE topup_id = :id"),
+            {"id": idempotency_key},
+        )
+        await db.commit()
+        raise
+
+    await apply_verified_capture(db, topup, capture)
+    await db.commit()
+    return topup_receipt(topup, "CAPTURED")
