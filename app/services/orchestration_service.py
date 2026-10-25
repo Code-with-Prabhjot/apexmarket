@@ -18,6 +18,7 @@ import logging
 import math
 import time
 from typing import Dict, List, Optional, Tuple, Any
+from urllib.parse import urlparse
 import uuid
 
 import httpx
@@ -46,6 +47,29 @@ from app.services.verification_service import (
 
 logger = logging.getLogger("apexmarket.orchestration")
 settings = get_settings()
+
+
+def _origin(url: str) -> Tuple[str, str, Optional[int]]:
+    parsed = urlparse(url)
+    return parsed.scheme.lower(), (parsed.hostname or "").lower(), parsed.port
+
+
+def provider_api_key(endpoint_url: str, config=None) -> Optional[str]:
+    """
+    Returns the API key for a node endpoint, but only when the endpoint has exactly the
+    same origin (scheme, host, port) as a configured provider. Keys are never sent to
+    any other host, so a registered node cannot harvest them.
+    """
+    config = config or settings
+    providers = (
+        (config.NEBIUS_BASE_URL, config.NEBIUS_API_KEY),
+        (config.SECONDARY_BASE_URL, config.SECONDARY_API_KEY),
+    )
+    origin = _origin(endpoint_url)
+    for base_url, api_key in providers:
+        if api_key and origin == _origin(base_url):
+            return api_key
+    return None
 
 
 class JobOrchestrationService:
@@ -205,10 +229,12 @@ class JobOrchestrationService:
             if not anchor_cand:
                 raise RuntimeError("No verified ANCHOR node found in compute registry.")
 
-            anchor_exec = ExecNode.from_candidate(anchor_cand)
+            anchor_exec = ExecNode.from_candidate(anchor_cand, api_key=provider_api_key(anchor_cand.endpoint_url))
             anchor_exec.is_anchor = True
 
-            exec_nodes: Dict[str, ExecNode] = {c.node_id: ExecNode.from_candidate(c) for c in candidates}
+            exec_nodes: Dict[str, ExecNode] = {
+                c.node_id: ExecNode.from_candidate(c, api_key=provider_api_key(c.endpoint_url)) for c in candidates
+            }
             exec_nodes[anchor_exec.node_id] = anchor_exec
 
             # Canonical ShredExecutor encapsulates semaphores, streaming HTTP calls,

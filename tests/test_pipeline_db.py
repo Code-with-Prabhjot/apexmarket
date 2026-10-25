@@ -121,3 +121,31 @@ async def test_multi_shred_public_job_across_spot_and_anchor_completes(db, make_
     money = await money_snapshot(db, client_id)
     assert money["locked"] == 0
     assert money["available"] + money["nodes"] + money["platform_revenue"] == INITIAL_BALANCE
+
+
+async def test_nebius_key_is_sent_to_nebius_and_never_to_other_nodes(db, make_client, make_node, monkeypatch):
+    from app.config import Settings
+    from app.services import orchestration_service
+
+    monkeypatch.setattr(orchestration_service, "settings", Settings(
+        NEBIUS_BASE_URL="https://api.tokenfactory.nebius.com/v1", NEBIUS_API_KEY="nebius-test-key",
+    ))
+    client_id = await make_client(available_balance_micros=INITIAL_BALANCE)
+    await db.execute(text("""
+        INSERT INTO compute_nodes (node_id, provider_name, endpoint_url, model_id, trust_tier,
+                                   paypal_receiver_email, input_price_per_1m_micros, output_price_per_1m_micros)
+        VALUES ('nebius-anchor', 'Nebius', 'https://api.tokenfactory.nebius.com/v1', 'm', 'ANCHOR',
+                'anchor@example.invalid', 60000, 240000)
+    """))
+    await db.commit()
+    await make_node(trust_tier="VERIFIED_PROVIDER")  # https://example.invalid/v1
+    job_id, request = await submit_job(db, client_id, WorkloadSensitivity.PUBLIC, prompt_count=100)
+
+    provider = FakeProvider()
+    await run_job(db, client_id, job_id, request, provider)
+
+    nebius = [r for r in provider.requests if r.url.host == "api.tokenfactory.nebius.com"]
+    others = [r for r in provider.requests if r.url.host != "api.tokenfactory.nebius.com"]
+    assert nebius and others
+    assert all(r.headers.get("Authorization") == "Bearer nebius-test-key" for r in nebius)
+    assert all("Authorization" not in r.headers for r in others)
