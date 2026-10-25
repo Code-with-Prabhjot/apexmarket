@@ -241,9 +241,14 @@ async def test_job_settlement_retry_does_not_refund_or_charge_twice(db, make_cli
     assert await ledger_net(db, "platform_revenue") == 100_000
 
 
-async def test_platform_fee_is_capped_at_unspent_escrow(db, make_client):
+async def test_platform_fee_is_capped_at_unspent_escrow(db, make_client, make_node):
     client_id = await make_client(available_balance_micros=10_000_000)
+    node_id = await make_node()
     job_id = await lock_escrow_for_new_job(db, client_id, 1_000_000)
+    shred_id = await insert_shred(db, job_id, node_id)
+    await LedgerService.credit_node_verified_shred(
+        db, client_id, job_id, shred_id, node_id, shred_cost_micros=950_000, is_probation=False
+    )
 
     # Savings vs baseline would imply a $0.205 fee, but only $0.05 of escrow is unspent.
     summary = await LedgerService.release_unused_escrow_and_settle_job(
@@ -255,3 +260,27 @@ async def test_platform_fee_is_capped_at_unspent_escrow(db, make_client):
     assert summary["platform_fee_micros"] == 50_000
     assert summary["unused_refunded_micros"] == 0
     assert await ledger_net(db, "platform_revenue") == 50_000
+
+
+async def test_settling_an_aborted_job_refunds_exactly_what_is_left(db, make_client, make_node):
+    client_id = await make_client(available_balance_micros=10_000_000)
+    node_id = await make_node()
+    job_id = await lock_escrow_for_new_job(db, client_id, 5_000_000)
+    shred_id = await insert_shred(db, job_id, node_id)
+    await LedgerService.credit_node_verified_shred(
+        db, client_id, job_id, shred_id, node_id, shred_cost_micros=1_000_000, is_probation=False
+    )
+    await db.commit()
+
+    # The abort path reports actual cost 0 even though one shred was already paid.
+    for _ in range(2):
+        summary = await LedgerService.release_unused_escrow_and_settle_job(
+            db, client_id, job_id,
+            total_reserved_micros=5_000_000, actual_settled_micros=0, baseline_cost_micros=0,
+        )
+        await db.commit()
+
+    assert summary["platform_fee_micros"] == 0
+    assert await client_balances(db, client_id) == (9_000_000, 0)
+    assert await node_balances(db, node_id) == (1_000_000, 0)
+    assert await LedgerService.job_escrow_remaining(db, client_id, job_id) == 0

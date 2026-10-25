@@ -186,3 +186,24 @@ async def test_fee_is_ten_percent_of_real_savings_against_the_anchor(db, make_cl
     assert job.platform_fee_micros == savings * 1000 // 10_000
     # The old behaviour charged 10% of the unused budget ceiling instead.
     assert job.platform_fee_micros < (CEILING - job.actual_settled_cost_micros) // 10
+
+
+async def test_job_failing_after_paid_shreds_releases_the_rest_of_its_escrow(db, make_client, make_node, monkeypatch):
+    from app.services import orchestration_service
+
+    client_id = await make_client(available_balance_micros=INITIAL_BALANCE)
+    await make_node(trust_tier="ANCHOR")
+    job_id, request = await submit_job(db, client_id, WorkloadSensitivity.CONFIDENTIAL, prompt_count=120)
+
+    def fail_after_shreds_were_paid(*args, **kwargs):
+        raise RuntimeError("simulated failure after shred credits")
+
+    monkeypatch.setattr(orchestration_service, "anchor_baseline_cost_micros", fail_after_shreds_were_paid)
+    with pytest.raises(RuntimeError, match="simulated failure"):
+        await run_job(db, client_id, job_id, request, FakeProvider())
+
+    assert (await db.execute(text("SELECT status FROM batch_jobs WHERE job_id = :id"), {"id": job_id})).scalar_one() == "ABORTED_BUDGET"
+    money = await money_snapshot(db, client_id)
+    assert money["locked"] == 0
+    assert money["nodes"] > 0  # verified shreds stay paid
+    assert money["available"] + money["nodes"] + money["platform_revenue"] == INITIAL_BALANCE

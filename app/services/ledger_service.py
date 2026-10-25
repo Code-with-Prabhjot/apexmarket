@@ -306,6 +306,22 @@ class LedgerService:
         )
 
     @staticmethod
+    async def job_escrow_remaining(db: AsyncSession, client_id: uuid.UUID, job_id: uuid.UUID) -> int:
+        """Escrow still held for a job: everything locked for it minus everything paid out of it."""
+        result = await db.execute(
+            text("""
+                SELECT COALESCE(SUM(CASE WHEN credit_account = :escrow_account THEN amount_micros ELSE 0 END), 0)
+                     - COALESCE(SUM(CASE WHEN debit_account = :escrow_account THEN amount_micros ELSE 0 END), 0)
+                       AS job_escrow_remaining
+                FROM ledger_entries
+                WHERE job_id = :job_id
+                  AND (credit_account = :escrow_account OR debit_account = :escrow_account)
+            """),
+            {"job_id": job_id, "escrow_account": f"client_escrow:{client_id}"},
+        )
+        return max(0, int(result.scalar_one()))
+
+    @staticmethod
     async def release_unused_escrow_and_settle_job(
         db: AsyncSession,
         client_id: uuid.UUID,
@@ -320,14 +336,17 @@ class LedgerService:
              job's unused escrow and capped by it so the client never pays more than
              they reserved for the job.
           2. Refunds remaining unspent escrow back to client's available balance.
+        The escrow left for the job is read from the ledger (locked minus already paid
+        out), not derived from total_reserved_micros - actual_settled_micros, so an
+        aborted job that already paid some shreds still settles to exactly zero.
         """
-        unspent_micros = total_reserved_micros - actual_settled_micros
+        unspent_micros = await LedgerService.job_escrow_remaining(db, client_id, job_id)
         gross_savings, platform_fee = compute_net_savings_and_fee(
             baseline_cost_micros=baseline_cost_micros,
             actual_cost_micros=actual_settled_micros,
             take_rate_bps=settings.PLATFORM_TAKE_RATE_BPS,
         )
-        platform_fee = min(platform_fee, max(unspent_micros, 0))
+        platform_fee = min(platform_fee, unspent_micros)
         unused_micros = unspent_micros - platform_fee
 
         if platform_fee > 0:

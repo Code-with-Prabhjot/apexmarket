@@ -203,6 +203,15 @@ class InMemoryTestStore:
             )
             return MockResult([{"sum": total}])
 
+        # 5b. escrow still held for one job (locked minus paid out)
+        if "AS job_escrow_remaining" in s:
+            account = params["escrow_account"]
+            job_entries = [e for e in self.ledger_entries.values() if e.get("job_id") == params["job_id"]]
+            remaining = sum(e["amount_micros"] for e in job_entries if e.get("credit_account") == account) - sum(
+                e["amount_micros"] for e in job_entries if e.get("debit_account") == account
+            )
+            return MockResult([{"job_escrow_remaining": remaining}])
+
         # 6. client balance updates
         if s.startswith("UPDATE clients"):
             cid = params["client_id"]
