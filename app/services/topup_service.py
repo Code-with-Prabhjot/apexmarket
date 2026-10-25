@@ -22,6 +22,10 @@ class TopUpError(ValueError):
     """A top-up request we refuse (bad amount, wrong client, not approved, mismatch)."""
 
 
+class TopUpNotFound(TopUpError):
+    """The top-up does not exist or belongs to another client."""
+
+
 def validate_topup_amount(amount_micros: int, settings: Settings) -> None:
     if amount_micros % MICROS_PER_CENT != 0:
         raise TopUpError("Top-up amounts must be whole cents.")
@@ -212,7 +216,7 @@ async def capture_topup(
         )
     ).mappings().first()
     if not row or row["client_id"] != client_id:
-        raise TopUpError("Top-up not found.")
+        raise TopUpNotFound("Top-up not found.")
     topup = dict(row)
     if topup["status"] == "CAPTURED":
         await db.commit()
