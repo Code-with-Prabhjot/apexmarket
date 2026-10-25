@@ -4,12 +4,14 @@ Manages provider registration, trust tiers, balances, and node lifecycle.
 """
 
 from datetime import datetime, timezone
+import hmac
 import logging
 from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_db
 from app.schemas import NodeRegistrationRequest, NodeResponse, NodeTrustTier
 
@@ -85,9 +87,22 @@ def _build_default_node_responses() -> List[NodeResponse]:
 )
 async def register_node(
     request: NodeRegistrationRequest,
+    x_admin_key: str = Header(default=""),
     db: AsyncSession = Depends(get_db),
 ):
-    """Registers an inference node into the compute network."""
+    """
+    Registers an inference node into the compute network. Anyone may register a
+    PROBATION_SPOT node; ANCHOR and VERIFIED_PROVIDER nodes receive CONFIDENTIAL work
+    and skip probation, so registering them requires the admin key.
+    """
+    if request.trust_tier != NodeTrustTier.PROBATION_SPOT:
+        expected = get_settings().ADMIN_API_KEY
+        if not expected or not hmac.compare_digest(x_admin_key.encode(), expected.encode()):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only an admin can register ANCHOR or VERIFIED_PROVIDER nodes.",
+            )
+
     existing = await db.execute(
         text("SELECT node_id FROM compute_nodes WHERE node_id = :node_id"),
         {"node_id": request.node_id},
