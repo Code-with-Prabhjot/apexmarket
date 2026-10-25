@@ -281,7 +281,11 @@ class JobOrchestrationService:
                             f"assigned to non-ANCHOR node {row.node_id} (trust_tier={getattr(cand, 'trust_tier', None)})"
                         )
 
-            # 3 & 4. Asynchronously execute and verify each shred using canonical executor
+            # 3 & 4. Asynchronously execute and verify each shred using canonical executor.
+            # Shreds run concurrently but share one AsyncSession, which does not allow
+            # concurrent use, so every database step takes db_lock while HTTP calls stay parallel.
+            db_lock = asyncio.Lock()
+
             async def process_single_shred(shred_row) -> Tuple[List[PromptResultItem], int]:
                 shred_id = shred_row.shred_id
                 target_node_id = shred_row.node_id
@@ -289,11 +293,12 @@ class JobOrchestrationService:
                 assigned_node = exec_nodes.get(target_node_id, anchor_exec)
                 node_cand = candidate_map.get(target_node_id, anchor_cand)
 
-                await db.execute(
-                    text("UPDATE job_shreds SET status = 'RUNNING' WHERE shred_id = :shred_id"),
-                    {"shred_id": shred_id},
-                )
-                await db.commit()
+                async with db_lock:
+                    await db.execute(
+                        text("UPDATE job_shreds SET status = 'RUNNING' WHERE shred_id = :shred_id"),
+                        {"shred_id": shred_id},
+                    )
+                    await db.commit()
 
                 shred_prompts = [prompt_map[idx] for idx in prompt_indices]
 
@@ -357,40 +362,41 @@ class JobOrchestrationService:
                         + total_out * assigned_node.output_price_per_1m_micros / 1e6
                     )
 
-                    await db.execute(
-                        text("""
-                            UPDATE job_shreds
-                            SET status = :status,
-                                measured_input_tokens = :in_tok,
-                                measured_output_tokens = :out_tok,
-                                shred_cost_micros = :cost,
-                                canary_pass_rate = :pass_rate,
-                                server_hmac_attestation = :att
-                            WHERE shred_id = :shred_id
-                        """),
-                        {
-                            "status": ShredStatus.VERIFIED_PASS.value,
-                            "in_tok": total_in,
-                            "out_tok": total_out,
-                            "cost": shred_cost,
-                            "pass_rate": attestation.canary_accuracy,
-                            "att": attestation.server_hmac_signature,
-                            "shred_id": shred_id,
-                        },
-                    )
-
-                    # Credit verified node balance
                     is_probation = (node_cand.trust_tier == NodeTrustTier.PROBATION_SPOT)
-                    await LedgerService.credit_node_verified_shred(
-                        db=db,
-                        client_id=client_id,
-                        job_id=job_id,
-                        shred_id=shred_id,
-                        node_id=assigned_node.node_id,
-                        shred_cost_micros=shred_cost,
-                        is_probation=is_probation,
-                    )
-                    await db.commit()
+                    async with db_lock:
+                        await db.execute(
+                            text("""
+                                UPDATE job_shreds
+                                SET status = :status,
+                                    measured_input_tokens = :in_tok,
+                                    measured_output_tokens = :out_tok,
+                                    shred_cost_micros = :cost,
+                                    canary_pass_rate = :pass_rate,
+                                    server_hmac_attestation = :att
+                                WHERE shred_id = :shred_id
+                            """),
+                            {
+                                "status": ShredStatus.VERIFIED_PASS.value,
+                                "in_tok": total_in,
+                                "out_tok": total_out,
+                                "cost": shred_cost,
+                                "pass_rate": attestation.canary_accuracy,
+                                "att": attestation.server_hmac_signature,
+                                "shred_id": shred_id,
+                            },
+                        )
+
+                        # Credit verified node balance
+                        await LedgerService.credit_node_verified_shred(
+                            db=db,
+                            client_id=client_id,
+                            job_id=job_id,
+                            shred_id=shred_id,
+                            node_id=assigned_node.node_id,
+                            shred_cost_micros=shred_cost,
+                            is_probation=is_probation,
+                        )
+                        await db.commit()
 
                     items: List[PromptResultItem] = []
                     for p, res in zip(shred_prompts, prompt_raw):
@@ -419,23 +425,24 @@ class JobOrchestrationService:
                 pass_rate = attestation.canary_accuracy if attestation else 0.0
                 att_sig = attestation.server_hmac_signature if attestation else None
 
-                await db.execute(
-                    text("""
-                        UPDATE job_shreds
-                        SET status = :status,
-                            canary_pass_rate = :pass_rate,
-                            server_hmac_attestation = :att,
-                            retry_count = retry_count + 1
-                        WHERE shred_id = :shred_id
-                    """),
-                    {
-                        "status": ShredStatus.VERIFIED_FAIL_REROUTED.value,
-                        "pass_rate": pass_rate,
-                        "att": att_sig,
-                        "shred_id": shred_id,
-                    },
-                )
-                await db.commit()
+                async with db_lock:
+                    await db.execute(
+                        text("""
+                            UPDATE job_shreds
+                            SET status = :status,
+                                canary_pass_rate = :pass_rate,
+                                server_hmac_attestation = :att,
+                                retry_count = retry_count + 1
+                            WHERE shred_id = :shred_id
+                        """),
+                        {
+                            "status": ShredStatus.VERIFIED_FAIL_REROUTED.value,
+                            "pass_rate": pass_rate,
+                            "att": att_sig,
+                            "shred_id": shred_id,
+                        },
+                    )
+                    await db.commit()
 
                 # Fail over unverified prompts to verified anchor (retry budget = 2)
                 failover_items: List[PromptResultItem] = []
@@ -492,22 +499,27 @@ class JobOrchestrationService:
 
                 # Credit anchor node for the failover prompts
                 if anchor_failover_cost > 0:
-                    await LedgerService.credit_node_verified_shred(
-                        db=db,
-                        client_id=client_id,
-                        job_id=job_id,
-                        shred_id=shred_id,
-                        node_id=anchor_exec.node_id,
-                        shred_cost_micros=anchor_failover_cost,
-                        is_probation=False,
-                    )
-                    await db.commit()
+                    async with db_lock:
+                        await LedgerService.credit_node_verified_shred(
+                            db=db,
+                            client_id=client_id,
+                            job_id=job_id,
+                            shred_id=shred_id,
+                            node_id=anchor_exec.node_id,
+                            shred_cost_micros=anchor_failover_cost,
+                            is_probation=False,
+                        )
+                        await db.commit()
 
                 return failover_items, anchor_failover_cost
 
-            # Execute all shreds concurrently
+            # Execute all shreds concurrently. Wait for every shred before raising so the
+            # abort cleanup below never runs while another shred is still using the session.
             shred_tasks = [process_single_shred(row) for row in shred_rows]
-            shred_outputs = await asyncio.gather(*shred_tasks)
+            shred_outputs = await asyncio.gather(*shred_tasks, return_exceptions=True)
+            shred_errors = [o for o in shred_outputs if isinstance(o, BaseException)]
+            if shred_errors:
+                raise shred_errors[0]
 
             # 5. Reassemble prompt outputs in original prompt_index order
             all_prompt_results: List[PromptResultItem] = []
