@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
 from app.services.ledger_service import MICROS_PER_CENT, micros_to_usd_str
-from app.services.paypal_client import PayPalClient
+from app.services.paypal_client import PayPalClient, PayPalError
 from app.services.sandbox_payout_service import require_sandbox
 
 
@@ -108,3 +108,100 @@ async def create_topup_order(
         "amount_micros": amount_micros,
         "status": "CREATED",
     }
+
+
+def _paypal_issue(error: PayPalError) -> Optional[str]:
+    details = error.body.get("details") or [{}]
+    return details[0].get("issue")
+
+
+def extract_completed_capture(order: Dict[str, Any], topup_id: uuid.UUID, amount_micros: int) -> Dict[str, Any]:
+    """
+    Returns the order's capture only if PayPal reports it COMPLETED in USD for exactly
+    the recorded amount and tagged with this top-up. Anything else is refused.
+    """
+    units = order.get("purchase_units") or [{}]
+    unit = units[0]
+    captures = (unit.get("payments") or {}).get("captures") or []
+    if not captures:
+        raise TopUpError("PayPal returned no capture for this order.")
+    capture = captures[0]
+
+    if capture.get("status") != "COMPLETED":
+        raise TopUpError(f"PayPal capture is {capture.get('status')}, not COMPLETED.")
+    tag = capture.get("custom_id") or unit.get("custom_id") or unit.get("reference_id")
+    if tag != str(topup_id):
+        raise TopUpError("PayPal capture does not belong to this top-up.")
+    amount = capture.get("amount") or {}
+    if amount.get("currency_code") != "USD" or amount.get("value") != micros_to_usd_str(amount_micros):
+        raise TopUpError("PayPal capture amount does not match the recorded top-up.")
+    return capture
+
+
+async def apply_verified_capture(db: AsyncSession, topup: Dict[str, Any], capture: Dict[str, Any]) -> None:
+    """Marks a top-up CAPTURED from a capture already checked by extract_completed_capture."""
+    await db.execute(
+        text("""
+            UPDATE paypal_topups
+            SET status = 'CAPTURED', paypal_capture_id = :capture_id, captured_at = NOW()
+            WHERE topup_id = :id AND status <> 'CAPTURED'
+        """),
+        {"capture_id": capture["id"], "id": topup["topup_id"]},
+    )
+
+
+def topup_receipt(topup: Dict[str, Any], status: str) -> Dict[str, Any]:
+    return {
+        "topup_id": topup["topup_id"],
+        "paypal_order_id": topup["paypal_order_id"],
+        "amount_micros": topup["amount_micros"],
+        "status": status,
+    }
+
+
+async def capture_topup(
+    db: AsyncSession,
+    paypal: PayPalClient,
+    client_id: uuid.UUID,
+    topup_id: uuid.UUID,
+    settings: Settings,
+) -> Dict[str, Any]:
+    """
+    Captures a buyer-approved top-up order. Safe to call repeatedly: the top-up row is
+    locked for the whole call, the PayPal request id is fixed per top-up, and an already
+    captured top-up returns its receipt without calling PayPal again.
+    """
+    require_sandbox(settings)
+    row = (
+        await db.execute(
+            text("SELECT * FROM paypal_topups WHERE topup_id = :id FOR UPDATE"),
+            {"id": topup_id},
+        )
+    ).mappings().first()
+    if not row or row["client_id"] != client_id:
+        raise TopUpError("Top-up not found.")
+    topup = dict(row)
+    if topup["status"] == "CAPTURED":
+        await db.commit()
+        return topup_receipt(topup, "CAPTURED")
+    if topup["status"] == "FAILED" or not topup["paypal_order_id"]:
+        raise TopUpError("This top-up can no longer be captured; start a new one.")
+
+    order_path = f"/v2/checkout/orders/{topup['paypal_order_id']}"
+    try:
+        order = await paypal.request("POST", f"{order_path}/capture", json={}, request_id=f"topup-capture:{topup_id}")
+    except PayPalError as error:
+        issue = _paypal_issue(error)
+        if issue == "ORDER_ALREADY_CAPTURED":
+            order = await paypal.request("GET", order_path)
+        elif issue in ("ORDER_NOT_APPROVED", "PAYER_ACTION_REQUIRED"):
+            raise TopUpError("The buyer has not approved this top-up in PayPal yet.") from error
+        elif issue == "INSTRUMENT_DECLINED":
+            raise TopUpError("PayPal declined the payment method; the buyer can retry approval.") from error
+        else:
+            raise
+
+    capture = extract_completed_capture(order, topup_id, topup["amount_micros"])
+    await apply_verified_capture(db, topup, capture)
+    await db.commit()
+    return topup_receipt(topup, "CAPTURED")
