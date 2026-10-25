@@ -115,6 +115,12 @@ def _paypal_issue(error: PayPalError) -> Optional[str]:
     return details[0].get("issue")
 
 
+def capture_status(order: Dict[str, Any]) -> Optional[str]:
+    unit = (order.get("purchase_units") or [{}])[0]
+    captures = (unit.get("payments") or {}).get("captures") or [{}]
+    return captures[0].get("status")
+
+
 def extract_completed_capture(order: Dict[str, Any], topup_id: uuid.UUID, amount_micros: int) -> Dict[str, Any]:
     """
     Returns the order's capture only if PayPal reports it COMPLETED in USD for exactly
@@ -298,10 +304,13 @@ async def charge_vaulted_topup(
     try:
         capture = extract_completed_capture(order, idempotency_key, amount_micros)
     except TopUpError:
-        await db.execute(
-            text("UPDATE paypal_topups SET status = 'FAILED' WHERE topup_id = :id"),
-            {"id": idempotency_key},
-        )
+        # Only a definite decline closes the top-up; a PENDING capture stays open so the
+        # PAYMENT.CAPTURE.COMPLETED webhook can still credit it.
+        if capture_status(order) in ("DECLINED", "FAILED"):
+            await db.execute(
+                text("UPDATE paypal_topups SET status = 'FAILED' WHERE topup_id = :id"),
+                {"id": idempotency_key},
+            )
         await db.commit()
         raise
 
