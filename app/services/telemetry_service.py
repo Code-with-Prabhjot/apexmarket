@@ -83,11 +83,16 @@ class TelemetryService:
         k_tps = cls._key_tps(node_id)
         k_err = cls._key_errors(node_id)
 
-        pipe = redis.pipeline()
-        pipe.lrange(k_ttft, 0, cls.WINDOW_SIZE - 1)
-        pipe.lrange(k_tps, 0, cls.WINDOW_SIZE - 1)
-        pipe.lrange(k_err, 0, cls.WINDOW_SIZE - 1)
-        raw_ttfts, raw_tps, raw_errs = await pipe.execute()
+        raw_ttfts, raw_tps, raw_errs = [], [], []
+        if redis is not None:
+            try:
+                pipe = redis.pipeline()
+                pipe.lrange(k_ttft, 0, cls.WINDOW_SIZE - 1)
+                pipe.lrange(k_tps, 0, cls.WINDOW_SIZE - 1)
+                pipe.lrange(k_err, 0, cls.WINDOW_SIZE - 1)
+                raw_ttfts, raw_tps, raw_errs = await pipe.execute()
+            except Exception:
+                raw_ttfts, raw_tps, raw_errs = [], [], []
 
         ttfts = [float(x) for x in raw_ttfts] if raw_ttfts else [100.0]
         tps = [float(x) for x in raw_tps] if raw_tps else [80.0]
@@ -118,18 +123,44 @@ class TelemetryService:
         Retrieves all active nodes from PostgreSQL and enriches each record with
         live rolling metrics from Redis.
         """
-        result = await db.execute(
-            text("""
-                SELECT node_id, provider_name, endpoint_url, model_id, trust_tier,
-                       input_price_per_1m_micros, output_price_per_1m_micros, is_active
-                FROM compute_nodes
-                WHERE is_active = TRUE
-                ORDER BY trust_tier ASC, input_price_per_1m_micros ASC
-            """)
-        )
-        nodes = result.fetchall()
-        snapshots: List[NodeTelemetrySnapshot] = []
+        nodes = []
+        try:
+            result = await db.execute(
+                text("""
+                    SELECT node_id, provider_name, endpoint_url, model_id, trust_tier,
+                           input_price_per_1m_micros, output_price_per_1m_micros, is_active
+                    FROM compute_nodes
+                    WHERE is_active = TRUE
+                    ORDER BY trust_tier ASC, input_price_per_1m_micros ASC
+                """)
+            )
+            nodes = result.fetchall()
+        except Exception:
+            nodes = []
 
+        if not nodes:
+            from app.api.routes_nodes import DEFAULT_SEEDED_NODES
+            fallback_snapshots: List[NodeTelemetrySnapshot] = []
+            for n in DEFAULT_SEEDED_NODES:
+                health = await cls.get_node_health(redis, n["node_id"])
+                fallback_snapshots.append(
+                    NodeTelemetrySnapshot(
+                        node_id=n["node_id"],
+                        provider_name=n["provider_name"],
+                        endpoint_url=n["endpoint_url"],
+                        model_id=n["model_id"],
+                        trust_tier=NodeTrustTier(n["trust_tier"]),
+                        input_price_per_1m_micros=n["input_price_per_1m_micros"],
+                        output_price_per_1m_micros=n["output_price_per_1m_micros"],
+                        p95_ttft_ms=health["p95_ttft_ms"],
+                        tokens_per_sec=health["tokens_per_sec"],
+                        error_rate_50req=health["error_rate_50req"],
+                        is_active=True,
+                    )
+                )
+            return fallback_snapshots
+
+        snapshots: List[NodeTelemetrySnapshot] = []
         for row in nodes:
             health = await cls.get_node_health(redis, row.node_id)
             snapshots.append(

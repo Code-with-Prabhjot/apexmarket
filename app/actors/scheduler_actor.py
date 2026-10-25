@@ -1,7 +1,7 @@
 """
 ApexMarket: Capacity-Aware Greedy Water-Filling Scheduler Actor
 Implements:
-  1. Sensitivity Gate (Fail-Closed Default: 100% to Nebius Anchor on CONFIDENTIAL)
+  1. Sensitivity Gate (Fail-Closed Default: 100% to verified ANCHOR on CONFIDENTIAL)
   2. Effective Unit Cost Formulation (accounting for 9% verification overhead on spot)
   3. Capacity & Concurrency Ceilings (asyncio.Semaphore guards per node)
   4. Makespan SLA Deadline verification
@@ -127,26 +127,22 @@ class CapacityAwareScheduler:
         """
         Executes capacity-aware water-filling prompt allocation into shreds.
         Enforces:
-          - CONFIDENTIAL: 100% to Nebius anchor.
+          - CONFIDENTIAL: 100% strictly to verified ANCHOR nodes (fail-closed).
           - PROBATION_SPOT: Capped at <= 5% of total prompts.
           - Max concurrency limits per node.
         """
         if not candidates:
             raise ValueError("No active compute nodes available for scheduling.")
 
-        # 1. Sensitivity Gate
+        # 1. Sensitivity Gate (Fail-Closed: 100% strictly to verified ANCHOR nodes)
         if sensitivity == WorkloadSensitivity.CONFIDENTIAL:
             anchor_candidates = [
                 c for c in candidates
                 if c.trust_tier == NodeTrustTier.ANCHOR
-                or "anchor" in c.node_id.lower()
-                or "nebius" in c.provider_name.lower()
             ]
             if not anchor_candidates:
-                # If no explicit ANCHOR tier, take first available node as anchor
-                anchor_node = candidates[0]
-            else:
-                anchor_node = anchor_candidates[0]
+                raise ValueError("No verified ANCHOR nodes available for CONFIDENTIAL workload.")
+            anchor_node = anchor_candidates[0]
 
             return self._chunk_all_to_single_node(job_id, total_prompts, anchor_node.node_id, candidates=candidates)
 
@@ -193,9 +189,11 @@ class CapacityAwareScheduler:
                 )
                 progress_made = True
 
-            # If all capacity constraints prevented allocation, fallback to anchor
+            # If all capacity constraints prevented allocation, fallback to verified anchor
             if not progress_made and unassigned_ptr < total_prompts:
-                anchor = next((c for c in candidates if c.trust_tier == NodeTrustTier.ANCHOR), candidates[0])
+                anchor = next((c for c in candidates if c.trust_tier == NodeTrustTier.ANCHOR), None)
+                if not anchor:
+                    raise ValueError("No verified ANCHOR node available for unallocated prompts.")
                 remaining_indices = all_indices[unassigned_ptr:]
                 assignments.append(
                     ShredAssignment(

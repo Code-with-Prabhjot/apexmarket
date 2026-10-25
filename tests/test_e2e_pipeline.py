@@ -78,6 +78,16 @@ class MockResult:
     def fetchall(self):
         return self._rows
 
+    def scalar(self):
+        row = self.fetchone()
+        if row is None:
+            return None
+        if isinstance(row, MockRow):
+            return list(row._d.values())[0]
+        if isinstance(row, (tuple, list)):
+            return row[0]
+        return row
+
     def scalar_one(self):
         row = self.fetchone()
         if row is None:
@@ -96,15 +106,58 @@ class MockResult:
 
 
 class InMemoryTestStore:
-    def __init__(self):
+    def __init__(self, seed_defaults: bool = False):
         self.clients = {}
         self.compute_nodes = {}
         self.batch_jobs = {}
         self.job_shreds = {}
         self.ledger_entries = {}
+        if seed_defaults:
+            from app.api.routes_nodes import DEFAULT_SEEDED_NODES
+            for n in DEFAULT_SEEDED_NODES:
+                self.compute_nodes[n["node_id"]] = {
+                    **n,
+                    "trust_tier": n["trust_tier"] if isinstance(n["trust_tier"], str) else n["trust_tier"].value,
+                    "pending_probation_micros": 0,
+                    "withdrawable_micros": 0,
+                    "payout_pending_micros": 0,
+                    "is_active": True,
+                    "created_at": datetime.now(timezone.utc),
+                }
 
     def execute_sql(self, sql_str: str, params: dict) -> MockResult:
         s = " ".join(sql_str.strip().split())
+
+        # 0. compute_nodes queries & count
+        if "SELECT COUNT(*) FROM compute_nodes" in s or "SELECT count(*) FROM compute_nodes" in s.lower():
+            return MockResult([{"count": len(self.compute_nodes)}])
+
+        if s.startswith("SELECT * FROM compute_nodes"):
+            if "WHERE node_id = :node_id" in s:
+                nid = params.get("node_id")
+                n = self.compute_nodes.get(nid)
+                return MockResult([n] if n else [])
+            return MockResult(list(self.compute_nodes.values()))
+
+        if s.startswith("INSERT INTO compute_nodes"):
+            nid = params["node_id"]
+            self.compute_nodes[nid] = {
+                "node_id": nid,
+                "provider_name": params.get("provider_name", "Test Provider"),
+                "endpoint_url": params.get("endpoint_url", "http://test/v1"),
+                "model_id": params.get("model_id", "nvidia/nemotron-3-nano-30b-a3b"),
+                "trust_tier": params.get("trust_tier", "PROBATION_SPOT"),
+                "paypal_receiver_email": params.get("paypal_receiver_email", "node@example.com"),
+                "input_price_per_1m_micros": params.get("input_price_per_1m_micros", params.get("input_price", 40000)),
+                "output_price_per_1m_micros": params.get("output_price_per_1m_micros", params.get("output_price", 160000)),
+                "max_concurrent_requests": params.get("max_concurrent_requests", params.get("max_concurrent", 10)),
+                "pending_probation_micros": 0,
+                "withdrawable_micros": 0,
+                "payout_pending_micros": 0,
+                "is_active": True,
+                "created_at": datetime.now(timezone.utc),
+            }
+            return MockResult([])
 
         # 1. clients lookup
         if "SELECT client_id FROM clients WHERE api_key_hash" in s:
@@ -218,6 +271,7 @@ class InMemoryTestStore:
                 "total_makespan_ms": None,
                 "created_at": params.get("created_at", datetime.now(timezone.utc)),
                 "completed_at": None,
+                "results_payload": None,
             }
             return MockResult([])
 
@@ -245,6 +299,8 @@ class InMemoryTestStore:
                     job["total_makespan_ms"] = params["makespan"]
                 if "completed_at" in params or "now" in params:
                     job["completed_at"] = params.get("completed_at", params.get("now"))
+                if "results_payload" in params:
+                    job["results_payload"] = params["results_payload"]
             return MockResult([])
 
         # 10. job_shreds queries and updates
@@ -826,4 +882,150 @@ async def test_full_rest_api_lifecycle_and_results_query(mock_store):
         assert all(r["output_text"] != "" for r in results_data)
         assert all(r["executing_node_id"] == "nebius-anchor" for r in results_data)
 
+        # 5. Assert durable storage: results_payload is durably written to PostgreSQL batch_jobs
+        stored_job = mock_store.batch_jobs[job_id]
+        assert stored_job["results_payload"] is not None
+        durable_payload = json.loads(stored_job["results_payload"])
+        assert len(durable_payload) == 3
+        assert [r["prompt_index"] for r in durable_payload] == [0, 1, 2]
+
     await mock_http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_enum_anchor_enforcement_rejects_nebius_imposter(mock_store):
+    """
+    Vulnerability 3 Test: Cryptographic/Enum-Based Anchor Enforcement.
+    A rogue node named 'nebius-imposter' with provider_name 'Nebius Token Factory Fake'
+    must NEVER be selected for CONFIDENTIAL workloads if its trust_tier != ANCHOR.
+    Traffic must strictly route to the verified ANCHOR node regardless of node names.
+    """
+    store = mock_store
+    store.compute_nodes.clear()
+
+    # Rogue node with 'nebius' in provider_name and node_id, but PROBATION_SPOT trust tier
+    store.compute_nodes["nebius-imposter"] = {
+        "node_id": "nebius-imposter",
+        "provider_name": "Nebius Token Factory Imposter",
+        "endpoint_url": "http://nebius-imposter/v1",
+        "model_id": "nvidia/nemotron-3-nano-30b-a3b",
+        "trust_tier": NodeTrustTier.PROBATION_SPOT.value,
+        "paypal_receiver_email": "imposter@fake.com",
+        "input_price_per_1m_micros": 10_000,
+        "output_price_per_1m_micros": 40_000,
+        "max_concurrent_requests": 10,
+        "pending_probation_micros": 0,
+        "withdrawable_micros": 0,
+        "payout_pending_micros": 0,
+        "is_active": True,
+    }
+
+    # Legitimate anchor node without 'nebius' in its name
+    store.compute_nodes["custom-anchor-01"] = {
+        "node_id": "custom-anchor-01",
+        "provider_name": "Validated Sovereign Cloud",
+        "endpoint_url": "http://custom-anchor-01/v1",
+        "model_id": "nvidia/nemotron-3-nano-30b-a3b",
+        "trust_tier": NodeTrustTier.ANCHOR.value,
+        "paypal_receiver_email": "anchor@sovereign.com",
+        "input_price_per_1m_micros": 60_000,
+        "output_price_per_1m_micros": 240_000,
+        "max_concurrent_requests": 10,
+        "pending_probation_micros": 0,
+        "withdrawable_micros": 0,
+        "payout_pending_micros": 0,
+        "is_active": True,
+    }
+
+    apps = {
+        "nebius-imposter": mk_mock_node("nebius-imposter"),
+        "custom-anchor-01": mk_mock_node("custom-anchor-01"),
+    }
+    mock_http_client = build_mock_client(apps)
+    session_factory = MockAsyncSessionFactory(store)
+
+    orchestrator = JobOrchestrationService()
+    orchestrator.default_http_client = mock_http_client
+    orchestrator.session_factory = session_factory
+
+    req = BatchJobCreateRequest(
+        sensitivity=WorkloadSensitivity.CONFIDENTIAL,
+        prompts=[InferencePrompt(prompt_index=i, content=f"Confidential payload {i}") for i in range(10)],
+        max_tokens_per_prompt=64,
+        max_cost_ceiling_micros=1_000_000,
+    )
+    job_id = uuid.uuid4()
+    client_id = uuid.uuid4()
+    store.clients[client_id] = {
+        "client_id": client_id,
+        "available_balance_micros": 100_000_000,
+        "locked_escrow_micros": 1_000_000,
+        "hourly_spend_limit_micros": 50_000_000,
+    }
+
+    async with session_factory() as session:
+        results = await orchestrator.execute_job(
+            job_id=job_id,
+            request=req,
+            client_id=client_id,
+            db=session,
+            http_client=mock_http_client,
+            tracker=ProgressTracker(),
+        )
+
+    # Assert 100% of prompts executed on custom-anchor-01, 0 on nebius-imposter
+    assert len(results) == 10
+    assert all(r.executing_node_id == "custom-anchor-01" for r in results)
+    assert not any(r.executing_node_id == "nebius-imposter" for r in results)
+    assert store.compute_nodes["custom-anchor-01"]["withdrawable_micros"] > 0
+    assert store.compute_nodes["nebius-imposter"]["withdrawable_micros"] == 0
+
+    await mock_http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_confidential_fails_closed_when_no_anchor_registered(mock_store):
+    """
+    Vulnerability 3 Test: Fail-closed guarantee for CONFIDENTIAL workloads.
+    When no verified ANCHOR node exists in the registry, scheduling must raise ValueError.
+    """
+    store = mock_store
+    store.compute_nodes.clear()
+
+    # Only spot nodes exist
+    store.compute_nodes["spot-only-1"] = {
+        "node_id": "spot-only-1",
+        "provider_name": "Spot Provider 1",
+        "endpoint_url": "http://spot1/v1",
+        "model_id": "m",
+        "trust_tier": NodeTrustTier.VERIFIED_PROVIDER.value,
+        "paypal_receiver_email": "spot1@test.com",
+        "input_price_per_1m_micros": 40_000,
+        "output_price_per_1m_micros": 160_000,
+        "max_concurrent_requests": 4,
+        "pending_probation_micros": 0,
+        "withdrawable_micros": 0,
+        "payout_pending_micros": 0,
+        "is_active": True,
+    }
+
+    session_factory = MockAsyncSessionFactory(store)
+    orchestrator = JobOrchestrationService()
+
+    req = BatchJobCreateRequest(
+        sensitivity=WorkloadSensitivity.CONFIDENTIAL,
+        prompts=[InferencePrompt(prompt_index=0, content="Secret prompt")],
+        max_tokens_per_prompt=64,
+        max_cost_ceiling_micros=100_000,
+    )
+
+    async with session_factory() as session:
+        candidates = await orchestrator.scheduler.get_candidate_nodes(db=session)
+        with pytest.raises(ValueError, match="No verified ANCHOR nodes available"):
+            orchestrator.scheduler.schedule_batch(
+                job_id=uuid.uuid4(),
+                total_prompts=1,
+                sensitivity=req.sensitivity,
+                candidates=candidates,
+            )
+

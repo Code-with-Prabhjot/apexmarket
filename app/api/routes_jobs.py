@@ -4,6 +4,7 @@ Handles batch ingestion, escrow locking, sensitivity gating, and job result quer
 """
 
 from datetime import datetime, timezone
+import json
 from typing import List, Optional
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Header, status
@@ -244,14 +245,22 @@ async def get_batch_job_results(
     job_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """Retrieves reassembled prompt outputs in original index order."""
-    results = orchestration_service.get_job_results(job_id)
-    if results is not None:
-        return results
+    """Retrieves reassembled prompt outputs in original index order from durable storage."""
+    # 1. Check optional Redis cache for fast polling
+    try:
+        from app.database import get_redis_client
+        redis = await get_redis_client()
+        if redis:
+            cached_json = await redis.get(f"job_results:{job_id}")
+            if cached_json:
+                data = json.loads(cached_json if isinstance(cached_json, str) else cached_json.decode("utf-8"))
+                return [PromptResultItem(**item) for item in data]
+    except Exception:
+        pass
 
-    # Verify if job exists in database
+    # 2. Query durable PostgreSQL database
     result = await db.execute(
-        text("SELECT status FROM batch_jobs WHERE job_id = :job_id"),
+        text("SELECT status, results_payload FROM batch_jobs WHERE job_id = :job_id"),
         {"job_id": job_id},
     )
     row = result.fetchone()
@@ -260,11 +269,30 @@ async def get_batch_job_results(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job {job_id} not found.",
         )
-    if row[0] in ("QUEUED", "RUNNING"):
+
+    job_status = getattr(row, "status", None) or row[0]
+    if job_status in ("QUEUED", "RUNNING"):
         raise HTTPException(
             status_code=status.HTTP_425_TOO_EARLY,
-            detail=f"Job {job_id} is currently {row[0]}. Results not yet finalized.",
+            detail=f"Job {job_id} is currently {job_status}. Results not yet finalized.",
         )
+
+    raw_payload = getattr(row, "results_payload", None)
+    if raw_payload is None and len(row) > 1:
+        raw_payload = row[1]
+
+    if raw_payload:
+        data = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+        items = [PromptResultItem(**item) for item in data]
+        try:
+            from app.database import get_redis_client
+            redis = await get_redis_client()
+            if redis:
+                await redis.set(f"job_results:{job_id}", json.dumps(data), ex=3600)
+        except Exception:
+            pass
+        return items
+
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Results for job {job_id} could not be retrieved.",

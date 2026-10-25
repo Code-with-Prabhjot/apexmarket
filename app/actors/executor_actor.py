@@ -3,7 +3,10 @@ streaming TTFT measurement, and ordered reassembly by prompt_index.
 Failover order for a prompt: assigned node -> other spot nodes (cheapest first) -> anchor.
 Prompts assigned to an anchor (CONFIDENTIAL) never fail over to spot nodes.
 """
-import asyncio, json, math, time
+import asyncio
+import json
+import math
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -77,9 +80,10 @@ class ShredExecutor:
         return [first] + spot + anchors
 
     def _dead(self, n: ExecNode) -> bool:
-        return self.fail_streak[n.node_id] >= self.breaker_threshold and not n.is_anchor
+        return self.fail_streak.get(n.node_id, 0) >= self.breaker_threshold and not n.is_anchor
 
-    async def _call(self, n: ExecNode, prompt: str, max_tokens: int) -> Tuple[str, int, int, float]:
+    async def _call_http(self, n: ExecNode, prompt: str, max_tokens: int, timeout_s: float) -> Tuple[str, int, int, float]:
+        """Low-level streaming HTTP call to chat completions endpoint."""
         headers = {"Authorization": f"Bearer {n.api_key}"} if n.api_key else {}
         body = {"model": n.model_id, "max_tokens": max_tokens, "stream": True,
                 "stream_options": {"include_usage": True},
@@ -90,7 +94,7 @@ class ShredExecutor:
         ttft = 0.0
         t0 = time.perf_counter()
         async with self.client.stream("POST", url, json=body, headers=headers,
-                                      timeout=self.timeout_s) as r:
+                                      timeout=timeout_s) as r:
             if r.status_code != 200:
                 raise RuntimeError(f"HTTP {r.status_code}")
             async for line in r.aiter_lines():
@@ -106,14 +110,63 @@ class ShredExecutor:
                     piece = (ch.get("delta") or {}).get("content")
                     if piece:
                         if not parts:
-                            ttft = (time.perf_counter() - t0) * 1000
+                            ttft = (time.perf_counter() - t0) * 1000.0
                         parts.append(piece)
         text = "".join(parts)
         if not text:
-            raise RuntimeError("empty response")
-        in_t = (usage or {}).get("prompt_tokens") or max(1, len(prompt) // 4)
-        out_t = (usage or {}).get("completion_tokens") or max(1, len(text) // 4)
+            raise RuntimeError("empty response from node")
+
+        from app.services.verification_service import TokenizerBillingAuthority
+        in_t = (usage or {}).get("prompt_tokens") or TokenizerBillingAuthority.count_tokens(prompt)
+        out_t = (usage or {}).get("completion_tokens") or TokenizerBillingAuthority.count_tokens(text)
         return text, in_t, out_t, ttft
+
+    async def _call(self, n: ExecNode, prompt: str, max_tokens: int) -> Tuple[str, int, int, float]:
+        """Legacy helper for backward compatibility."""
+        return await self._call_http(n, prompt, max_tokens, self.timeout_s)
+
+    async def call_node(
+        self,
+        node: ExecNode,
+        prompt: str,
+        max_tokens: int,
+        timeout_s: Optional[float] = None,
+    ) -> Tuple[str, int, int, float]:
+        """
+        Canonical execution method for a single prompt against an ExecNode.
+        Enforces:
+          - Circuit breaker check: rejects immediately if circuit is open
+          - Per-node concurrency semaphore
+          - Active inflight tracking
+          - Dynamic timeout handling
+          - Failure streak tracking & circuit breaker status updates
+          - Authoritative local token counting fallback
+        Returns (text, input_tokens, output_tokens, ttft_ms).
+        """
+        if self._dead(node):
+            raise RuntimeError(
+                f"Circuit breaker OPEN for node {node.node_id} "
+                f"({self.fail_streak.get(node.node_id, 0)} consecutive failures)"
+            )
+
+        sem = self.sems.setdefault(node.node_id, asyncio.Semaphore(max(1, node.max_concurrent)))
+        t_out = timeout_s if timeout_s is not None else self.timeout_s
+
+        async with sem:
+            self.tracker.inflight(node.node_id, +1)
+            try:
+                text, in_t, out_t, ttft = await self._call_http(node, prompt, max_tokens, timeout_s=t_out)
+                self.fail_streak[node.node_id] = 0
+                self.tracker.record(node.node_id, ttft, True)
+                return text, in_t, out_t, ttft
+            except Exception:
+                self.fail_streak[node.node_id] = self.fail_streak.get(node.node_id, 0) + 1
+                self.tracker.record(node.node_id, None, False)
+                if self._dead(node):
+                    self.tracker.set_status(node.node_id, "CIRCUIT_OPEN")
+                raise
+            finally:
+                self.tracker.inflight(node.node_id, -1)
 
     async def _run_prompt(self, idx: int, prompt: str, assigned: str, max_tokens: int,
                           job_id: str) -> PromptResult:
@@ -122,23 +175,14 @@ class ShredExecutor:
             if self._dead(n):
                 res.failed_nodes.append(n.node_id)
                 continue
-            async with self.sems[n.node_id]:
-                self.tracker.inflight(n.node_id, +1)
-                try:
-                    text, in_t, out_t, ttft = await self._call(n, prompt, max_tokens)
-                except (httpx.HTTPError, RuntimeError, asyncio.TimeoutError, json.JSONDecodeError) as e:
-                    self.fail_streak[n.node_id] += 1
-                    self.tracker.record(n.node_id, None, False)
-                    if self._dead(n):
-                        self.tracker.set_status(n.node_id, "CIRCUIT_OPEN")
-                    res.failed_nodes.append(n.node_id)
-                    res.error = f"{n.node_id}: {e}"
-                    self.tracker.advance(job_id, failover=True)
-                    continue
-                finally:
-                    self.tracker.inflight(n.node_id, -1)
-            self.fail_streak[n.node_id] = 0
-            self.tracker.record(n.node_id, ttft, True)
+            try:
+                text, in_t, out_t, ttft = await self.call_node(n, prompt, max_tokens, timeout_s=self.timeout_s)
+            except (httpx.HTTPError, RuntimeError, asyncio.TimeoutError, json.JSONDecodeError) as e:
+                res.failed_nodes.append(n.node_id)
+                res.error = f"{n.node_id}: {e}"
+                self.tracker.advance(job_id, failover=True)
+                continue
+
             cost = math.ceil(in_t * n.input_price_per_1m_micros / 1e6
                              + out_t * n.output_price_per_1m_micros / 1e6)
             res.text, res.node_id, res.error = text, n.node_id, None

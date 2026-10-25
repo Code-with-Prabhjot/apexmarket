@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS batch_jobs (
     baseline_anchor_cost_micros BIGINT NOT NULL DEFAULT 0 CHECK (baseline_anchor_cost_micros >= 0),
     baseline_batch_api_cost_micros BIGINT NOT NULL DEFAULT 0 CHECK (baseline_batch_api_cost_micros >= 0),
     total_makespan_ms DOUBLE PRECISION,
+    results_payload JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
@@ -178,3 +179,6 @@ CREATE INDEX IF NOT EXISTS idx_payout_items_node_id ON payout_items(node_id);
 
 -- Snapshot payout destinations so a retry never changes a reserved batch payload.
 ALTER TABLE payout_items ADD COLUMN IF NOT EXISTS payout_receiver_email TEXT;
+
+-- Durable job results storage to prevent in-memory volatility across restarts and workers.
+ALTER TABLE batch_jobs ADD COLUMN IF NOT EXISTS results_payload JSONB;

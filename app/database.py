@@ -27,6 +27,7 @@ engine: AsyncEngine = create_async_engine(
     max_overflow=10,
     pool_pre_ping=True,
     pool_recycle=1800,
+    connect_args={"timeout": 2.0} if "postgresql" in settings.DATABASE_URL else {},
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -63,6 +64,8 @@ async def get_redis_client() -> aioredis.Redis:
             settings.REDIS_URL,
             decode_responses=True,
             max_connections=50,
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
         )
     return _redis_client
 
@@ -71,7 +74,10 @@ async def close_database_connections() -> None:
     """Gracefully shuts down database and Redis connection pools."""
     global _redis_client
     if _redis_client is not None:
-        await _redis_client.close()
+        if hasattr(_redis_client, "aclose"):
+            await _redis_client.aclose()
+        else:
+            await _redis_client.close()
         _redis_client = None
     if engine is not None:
         await engine.dispose()
