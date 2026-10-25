@@ -252,6 +252,39 @@ class LedgerService:
         return True
 
     @staticmethod
+    async def credit_client_topup(
+        db: AsyncSession,
+        client_id: uuid.UUID,
+        topup_id: uuid.UUID,
+        amount_micros: int,
+    ) -> bool:
+        """
+        Credits a verified PayPal top-up to the client's available balance.
+        Keyed by topup_id, so a capture response and a webhook for the same top-up
+        credit it once. Returns True only when this call applied the credit.
+        """
+        entry_id = await LedgerService.insert_entry_if_new(
+            db=db,
+            idempotency_key=f"topup_credit:{topup_id}",
+            debit_account="paypal_clearing",
+            credit_account=f"client_available:{client_id}",
+            amount_micros=amount_micros,
+            description=f"PayPal prepaid top-up {topup_id}",
+        )
+        if entry_id is None:
+            return False
+
+        await db.execute(
+            text("""
+                UPDATE clients
+                SET available_balance_micros = available_balance_micros + :amount
+                WHERE client_id = :client_id
+            """),
+            {"amount": amount_micros, "client_id": client_id},
+        )
+        return True
+
+    @staticmethod
     async def credit_node_verified_shred(
         db: AsyncSession,
         client_id: uuid.UUID,

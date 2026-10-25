@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
-from app.services.ledger_service import MICROS_PER_CENT, micros_to_usd_str
+from app.services.ledger_service import MICROS_PER_CENT, LedgerService, micros_to_usd_str
 from app.services.paypal_client import PayPalClient, PayPalError
 from app.services.sandbox_payout_service import require_sandbox
 
@@ -139,7 +139,11 @@ def extract_completed_capture(order: Dict[str, Any], topup_id: uuid.UUID, amount
 
 
 async def apply_verified_capture(db: AsyncSession, topup: Dict[str, Any], capture: Dict[str, Any]) -> None:
-    """Marks a top-up CAPTURED from a capture already checked by extract_completed_capture."""
+    """
+    Marks a top-up CAPTURED and credits the client, from a capture already checked by
+    extract_completed_capture. The credit is idempotent per top-up.
+    """
+    await LedgerService.credit_client_topup(db, topup["client_id"], topup["topup_id"], topup["amount_micros"])
     await db.execute(
         text("""
             UPDATE paypal_topups
