@@ -266,8 +266,8 @@ class InMemoryTestStore:
                 "reserved_escrow_micros": params["escrow"],
                 "actual_settled_cost_micros": 0,
                 "platform_fee_micros": 0,
-                "baseline_anchor_cost_micros": params["baseline"],
-                "baseline_batch_api_cost_micros": int(params["ceiling"] * 0.75),
+                "baseline_anchor_cost_micros": params.get("baseline", 0),
+                "baseline_batch_api_cost_micros": 0,
                 "total_makespan_ms": None,
                 "created_at": params.get("created_at", datetime.now(timezone.utc)),
                 "completed_at": None,
@@ -295,6 +295,8 @@ class InMemoryTestStore:
                     job["actual_settled_cost_micros"] = params["cost"]
                 if "fee" in params:
                     job["platform_fee_micros"] = params["fee"]
+                if "baseline" in params:
+                    job["baseline_anchor_cost_micros"] = params["baseline"]
                 if "makespan" in params:
                     job["total_makespan_ms"] = params["makespan"]
                 if "completed_at" in params or "now" in params:

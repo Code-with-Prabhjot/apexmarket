@@ -122,11 +122,11 @@ async def create_batch_job(
             INSERT INTO batch_jobs (
                 job_id, client_id, sensitivity, status,
                 total_prompts, max_tokens_per_prompt, max_cost_ceiling_micros,
-                reserved_escrow_micros, baseline_anchor_cost_micros, created_at
+                reserved_escrow_micros, created_at
             ) VALUES (
                 :job_id, :client_id, :sensitivity, 'QUEUED',
                 :total_prompts, :max_tokens, :ceiling,
-                :escrow, :baseline, :created_at
+                :escrow, :created_at
             )
         """),
         {
@@ -137,7 +137,6 @@ async def create_batch_job(
             "max_tokens": request.max_tokens_per_prompt,
             "ceiling": request.max_cost_ceiling_micros,
             "escrow": request.max_cost_ceiling_micros,
-            "baseline": request.max_cost_ceiling_micros,
             "created_at": now,
         },
     )
@@ -181,8 +180,9 @@ async def create_batch_job(
         reserved_escrow_micros=request.max_cost_ceiling_micros,
         actual_settled_cost_micros=0,
         platform_fee_micros=0,
-        baseline_anchor_cost_micros=request.max_cost_ceiling_micros,
-        baseline_batch_api_cost_micros=int(request.max_cost_ceiling_micros * 0.75),
+        # Baselines are measured from real token counts once the job completes.
+        baseline_anchor_cost_micros=0,
+        baseline_batch_api_cost_micros=0,
         created_at=now,
     )
 

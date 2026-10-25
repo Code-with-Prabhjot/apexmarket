@@ -149,3 +149,40 @@ async def test_nebius_key_is_sent_to_nebius_and_never_to_other_nodes(db, make_cl
     assert nebius and others
     assert all(r.headers.get("Authorization") == "Bearer nebius-test-key" for r in nebius)
     assert all("Authorization" not in r.headers for r in others)
+
+
+async def job_fee_row(db, job_id):
+    return (await db.execute(
+        text("SELECT actual_settled_cost_micros, baseline_anchor_cost_micros, platform_fee_micros FROM batch_jobs WHERE job_id = :id"),
+        {"id": job_id},
+    )).one()
+
+
+async def test_anchor_only_job_pays_no_platform_fee(db, make_client, make_node):
+    client_id = await make_client(available_balance_micros=INITIAL_BALANCE)
+    await make_node(trust_tier="ANCHOR")
+    job_id, request = await submit_job(db, client_id, WorkloadSensitivity.CONFIDENTIAL, prompt_count=60)
+
+    await run_job(db, client_id, job_id, request, FakeProvider())
+
+    job = await job_fee_row(db, job_id)
+    assert job.platform_fee_micros == 0
+    assert 0 < job.baseline_anchor_cost_micros <= job.actual_settled_cost_micros
+    money = await money_snapshot(db, client_id)
+    assert money["available"] == INITIAL_BALANCE - job.actual_settled_cost_micros
+
+
+async def test_fee_is_ten_percent_of_real_savings_against_the_anchor(db, make_client, make_node):
+    client_id = await make_client(available_balance_micros=INITIAL_BALANCE)
+    await make_node(trust_tier="ANCHOR")  # 60,000 / 240,000 micros per 1M tokens
+    await make_node(trust_tier="VERIFIED_PROVIDER", input_price_per_1m_micros=30000, output_price_per_1m_micros=120000)
+    job_id, request = await submit_job(db, client_id, WorkloadSensitivity.PUBLIC, prompt_count=100)
+
+    await run_job(db, client_id, job_id, request, FakeProvider())
+
+    job = await job_fee_row(db, job_id)
+    savings = job.baseline_anchor_cost_micros - job.actual_settled_cost_micros
+    assert savings > 0
+    assert job.platform_fee_micros == savings * 1000 // 10_000
+    # The old behaviour charged 10% of the unused budget ceiling instead.
+    assert job.platform_fee_micros < (CEILING - job.actual_settled_cost_micros) // 10

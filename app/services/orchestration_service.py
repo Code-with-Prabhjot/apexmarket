@@ -72,6 +72,21 @@ def provider_api_key(endpoint_url: str, config=None) -> Optional[str]:
     return None
 
 
+def anchor_baseline_cost_micros(results: List[PromptResultItem], anchor: ExecNode) -> int:
+    """
+    What the completed prompts would have cost if all of them ran on the anchor, from
+    the same locally counted tokens used for billing. Rounded up once over the whole job,
+    so an anchor-only job never shows a positive "saving" from per-shred rounding.
+    """
+    completed = [r for r in results if r.status != "FAILED"]
+    total_in = sum(r.input_tokens for r in completed)
+    total_out = sum(r.output_tokens for r in completed)
+    return math.ceil(
+        total_in * anchor.input_price_per_1m_micros / 1e6
+        + total_out * anchor.output_price_per_1m_micros / 1e6
+    )
+
+
 class JobOrchestrationService:
     def __init__(self):
         self.scheduler = CapacityAwareScheduler()
@@ -576,7 +591,9 @@ class JobOrchestrationService:
             ).fetchone()
 
             reserved_micros = job_row.reserved_escrow_micros if job_row else request.max_cost_ceiling_micros
-            baseline_micros = job_row.baseline_anchor_cost_micros if job_row else request.max_cost_ceiling_micros
+            # Savings (and the platform fee) are measured against what the completed prompts
+            # would have cost on the anchor, never against the client's budget ceiling.
+            baseline_micros = anchor_baseline_cost_micros(reassembled, anchor_exec)
 
             settlement_report = await LedgerService.release_unused_escrow_and_settle_job(
                 db=db,
@@ -598,6 +615,7 @@ class JobOrchestrationService:
                     SET status = :status,
                         actual_settled_cost_micros = :cost,
                         platform_fee_micros = :fee,
+                        baseline_anchor_cost_micros = :baseline,
                         total_makespan_ms = :makespan,
                         completed_at = :completed_at,
                         results_payload = :results_payload
@@ -607,6 +625,7 @@ class JobOrchestrationService:
                     "status": final_status.value,
                     "cost": total_settled_cost_micros,
                     "fee": settlement_report["platform_fee_micros"],
+                    "baseline": baseline_micros,
                     "makespan": makespan_ms,
                     "completed_at": datetime.now(timezone.utc),
                     "results_payload": results_payload_json,

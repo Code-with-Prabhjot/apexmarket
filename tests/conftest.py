@@ -106,7 +106,11 @@ async def make_node(
 ) -> Callable[..., Awaitable[str]]:
     """Returns a helper that inserts a committed compute node and returns its node_id."""
 
-    async def _make_node(trust_tier: str = "VERIFIED_PROVIDER") -> str:
+    async def _make_node(
+        trust_tier: str = "VERIFIED_PROVIDER",
+        input_price_per_1m_micros: int = 60000,
+        output_price_per_1m_micros: int = 240000,
+    ) -> str:
         node_id = f"test-node-{uuid.uuid4().hex[:8]}"
         async with session_factory() as session:
             await session.execute(
@@ -116,10 +120,15 @@ async def make_node(
                         paypal_receiver_email, input_price_per_1m_micros, output_price_per_1m_micros
                     ) VALUES (
                         :node_id, 'Test Provider', 'https://example.invalid/v1', 'test-model',
-                        CAST(:trust_tier AS node_trust_tier), 'node@example.invalid', 60000, 240000
+                        CAST(:trust_tier AS node_trust_tier), 'node@example.invalid', :input_price, :output_price
                     )
                 """),
-                {"node_id": node_id, "trust_tier": trust_tier},
+                {
+                    "node_id": node_id,
+                    "trust_tier": trust_tier,
+                    "input_price": input_price_per_1m_micros,
+                    "output_price": output_price_per_1m_micros,
+                },
             )
             await session.commit()
         return node_id
