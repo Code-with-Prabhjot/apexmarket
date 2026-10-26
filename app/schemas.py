@@ -121,6 +121,10 @@ class BatchJobCreateRequest(BaseModel):
         le=3600.0,
         description="Maximum makespan deadline in seconds for the entire batch",
     )
+    target_model: Optional[str] = Field(
+        default="meta-llama/Llama-3.1-8B-Instruct",
+        description="Target model identifier for inference execution",
+    )
 
     @field_validator("prompts")
     @classmethod

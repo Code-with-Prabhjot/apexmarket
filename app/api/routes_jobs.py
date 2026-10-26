@@ -84,107 +84,120 @@ async def create_batch_job(
     """
     job_id = uuid.uuid4()
     total_prompts = len(request.prompts)
+    escrow_locked = False
 
-    # 1. Acquire client escrow lock
     try:
-        await LedgerService.lock_client_escrow(
-            db=db,
-            client_id=client_id,
-            required_escrow_micros=request.max_cost_ceiling_micros,
-            job_id=job_id,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=str(e),
-        )
-
-    # 2. Query candidates and partition into shreds
-    candidates = await scheduler.get_candidate_nodes(db=db)
-    if not candidates:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No compute nodes currently registered in the network.",
-        )
-
-    shred_assignments = scheduler.schedule_batch(
-        job_id=job_id,
-        total_prompts=total_prompts,
-        sensitivity=request.sensitivity,
-        candidates=candidates,
-        makespan_sla_seconds=request.makespan_sla_seconds,
-    )
-
-    # 3. Insert batch job record
-    now = datetime.now(timezone.utc)
-    await db.execute(
-        text("""
-            INSERT INTO batch_jobs (
-                job_id, client_id, sensitivity, status,
-                total_prompts, max_tokens_per_prompt, max_cost_ceiling_micros,
-                reserved_escrow_micros, baseline_anchor_cost_micros, created_at
-            ) VALUES (
-                :job_id, :client_id, :sensitivity, 'QUEUED',
-                :total_prompts, :max_tokens, :ceiling,
-                :escrow, :baseline, :created_at
+        # 1. Acquire client escrow lock
+        try:
+            await LedgerService.lock_client_escrow(
+                db=db,
+                client_id=client_id,
+                required_escrow_micros=request.max_cost_ceiling_micros,
+                job_id=job_id,
             )
-        """),
-        {
-            "job_id": job_id,
-            "client_id": client_id,
-            "sensitivity": request.sensitivity.value,
-            "total_prompts": total_prompts,
-            "max_tokens": request.max_tokens_per_prompt,
-            "ceiling": request.max_cost_ceiling_micros,
-            "escrow": request.max_cost_ceiling_micros,
-            "baseline": request.max_cost_ceiling_micros,
-            "created_at": now,
-        },
-    )
+            escrow_locked = True
+        except ValueError as e:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=str(e),
+            )
 
-    # 4. Insert job shreds
-    for shred in shred_assignments:
+        # 2. Query candidates and partition into shreds
+        candidates = await scheduler.get_candidate_nodes(db=db)
+        if not candidates:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No compute nodes currently registered in the network.",
+            )
+
+        shred_assignments = scheduler.schedule_batch(
+            job_id=job_id,
+            total_prompts=total_prompts,
+            sensitivity=request.sensitivity,
+            candidates=candidates,
+            makespan_sla_seconds=request.makespan_sla_seconds,
+        )
+
+        # 3. Insert batch job record
+        now = datetime.now(timezone.utc)
         await db.execute(
             text("""
-                INSERT INTO job_shreds (
-                    shred_id, job_id, node_id, status, prompt_indices, shred_cost_micros
+                INSERT INTO batch_jobs (
+                    job_id, client_id, sensitivity, status,
+                    total_prompts, max_tokens_per_prompt, max_cost_ceiling_micros,
+                    reserved_escrow_micros, baseline_anchor_cost_micros, created_at
                 ) VALUES (
-                    :shred_id, :job_id, :node_id, 'PENDING', :indices, :cost
+                    :job_id, :client_id, :sensitivity, 'QUEUED',
+                    :total_prompts, :max_tokens, :ceiling,
+                    :escrow, :baseline, :created_at
                 )
             """),
             {
-                "shred_id": shred.shred_id,
                 "job_id": job_id,
-                "node_id": shred.node_id,
-                "indices": shred.prompt_indices,
-                "cost": shred.estimated_cost_micros,
+                "client_id": client_id,
+                "sensitivity": request.sensitivity.value,
+                "total_prompts": total_prompts,
+                "max_tokens": request.max_tokens_per_prompt,
+                "ceiling": request.max_cost_ceiling_micros,
+                "escrow": request.max_cost_ceiling_micros,
+                "baseline": request.max_cost_ceiling_micros,
+                "created_at": now,
             },
         )
 
-    await db.commit()
+        # 4. Insert job shreds
+        for shred in shred_assignments:
+            await db.execute(
+                text("""
+                    INSERT INTO job_shreds (
+                        shred_id, job_id, node_id, status, prompt_indices, shred_cost_micros
+                    ) VALUES (
+                        :shred_id, :job_id, :node_id, 'PENDING', :indices, :cost
+                    )
+                """),
+                {
+                    "shred_id": shred.shred_id,
+                    "job_id": job_id,
+                    "node_id": shred.node_id,
+                    "indices": shred.prompt_indices,
+                    "cost": shred.estimated_cost_micros,
+                },
+            )
 
-    # 5. Launch asynchronous end-to-end orchestration pipeline
-    await orchestration_service.create_job_task(
-        job_id=job_id,
-        request=request,
-        client_id=client_id,
-    )
+        await db.commit()
 
-    return BatchJobResponse(
-        job_id=job_id,
-        client_id=client_id,
-        sensitivity=request.sensitivity,
-        status=JobStatus.QUEUED,
-        total_prompts=total_prompts,
-        max_tokens_per_prompt=request.max_tokens_per_prompt,
-        max_cost_ceiling_micros=request.max_cost_ceiling_micros,
-        reserved_escrow_micros=request.max_cost_ceiling_micros,
-        actual_settled_cost_micros=0,
-        platform_fee_micros=0,
-        baseline_anchor_cost_micros=request.max_cost_ceiling_micros,
-        baseline_batch_api_cost_micros=int(request.max_cost_ceiling_micros * 0.75),
-        created_at=now,
-    )
+        # 5. Launch asynchronous end-to-end orchestration pipeline
+        await orchestration_service.create_job_task(
+            job_id=job_id,
+            request=request,
+            client_id=client_id,
+        )
+
+        return BatchJobResponse(
+            job_id=job_id,
+            client_id=client_id,
+            sensitivity=request.sensitivity,
+            status=JobStatus.QUEUED,
+            total_prompts=total_prompts,
+            max_tokens_per_prompt=request.max_tokens_per_prompt,
+            max_cost_ceiling_micros=request.max_cost_ceiling_micros,
+            reserved_escrow_micros=request.max_cost_ceiling_micros,
+            actual_settled_cost_micros=0,
+            platform_fee_micros=0,
+            baseline_anchor_cost_micros=request.max_cost_ceiling_micros,
+            baseline_batch_api_cost_micros=int(request.max_cost_ceiling_micros * 0.75),
+            created_at=now,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit batch job: {str(e)}",
+        )
 
 
 @router.get(
@@ -217,22 +230,49 @@ async def get_batch_job(
             detail=f"Job {job_id} not found.",
         )
 
+    job_id_val = getattr(row, "job_id", None) or (row[0] if len(row) > 0 else job_id)
+    client_id_val = getattr(row, "client_id", None) or (row[1] if len(row) > 1 else uuid.uuid4())
+
+    raw_sens = getattr(row, "sensitivity", None) or (row[2] if len(row) > 2 else "CONFIDENTIAL")
+    try:
+        sensitivity_val = WorkloadSensitivity(raw_sens)
+    except ValueError:
+        sensitivity_val = WorkloadSensitivity.CONFIDENTIAL
+
+    raw_status = getattr(row, "status", None) or (row[3] if len(row) > 3 else "QUEUED")
+    try:
+        status_val = JobStatus(raw_status)
+    except ValueError:
+        status_val = JobStatus.QUEUED
+
+    total_prompts_val = getattr(row, "total_prompts", None) or (row[4] if len(row) > 4 else 0)
+    max_tokens_val = getattr(row, "max_tokens_per_prompt", None) or (row[5] if len(row) > 5 else 512)
+    ceiling_val = getattr(row, "max_cost_ceiling_micros", None) or (row[6] if len(row) > 6 else 0)
+    escrow_val = getattr(row, "reserved_escrow_micros", None) or (row[7] if len(row) > 7 else ceiling_val)
+    cost_val = getattr(row, "actual_settled_cost_micros", None) or (row[8] if len(row) > 8 else 0)
+    fee_val = getattr(row, "platform_fee_micros", None) or (row[9] if len(row) > 9 else 0)
+    baseline_val = getattr(row, "baseline_anchor_cost_micros", None) or (row[10] if len(row) > 10 else ceiling_val)
+    batch_api_val = getattr(row, "baseline_batch_api_cost_micros", None) or (row[11] if len(row) > 11 else int(ceiling_val * 0.75))
+    makespan_val = getattr(row, "total_makespan_ms", None) or (row[12] if len(row) > 12 else None)
+    created_val = getattr(row, "created_at", None) or (row[13] if len(row) > 13 else datetime.now(timezone.utc))
+    completed_val = getattr(row, "completed_at", None) or (row[14] if len(row) > 14 else None)
+
     return BatchJobResponse(
-        job_id=row.job_id,
-        client_id=row.client_id,
-        sensitivity=WorkloadSensitivity(row.sensitivity),
-        status=JobStatus(row.status),
-        total_prompts=row.total_prompts,
-        max_tokens_per_prompt=row.max_tokens_per_prompt,
-        max_cost_ceiling_micros=row.max_cost_ceiling_micros,
-        reserved_escrow_micros=row.reserved_escrow_micros,
-        actual_settled_cost_micros=row.actual_settled_cost_micros,
-        platform_fee_micros=row.platform_fee_micros,
-        baseline_anchor_cost_micros=row.baseline_anchor_cost_micros,
-        baseline_batch_api_cost_micros=row.baseline_batch_api_cost_micros,
-        total_makespan_ms=row.total_makespan_ms,
-        created_at=row.created_at,
-        completed_at=row.completed_at,
+        job_id=job_id_val,
+        client_id=client_id_val,
+        sensitivity=sensitivity_val,
+        status=status_val,
+        total_prompts=total_prompts_val,
+        max_tokens_per_prompt=max_tokens_val,
+        max_cost_ceiling_micros=ceiling_val,
+        reserved_escrow_micros=escrow_val,
+        actual_settled_cost_micros=cost_val,
+        platform_fee_micros=fee_val,
+        baseline_anchor_cost_micros=baseline_val,
+        baseline_batch_api_cost_micros=batch_api_val,
+        total_makespan_ms=makespan_val,
+        created_at=created_val,
+        completed_at=completed_val,
     )
 
 
@@ -281,17 +321,21 @@ async def get_batch_job_results(
     if raw_payload is None and len(row) > 1:
         raw_payload = row[1]
 
-    if raw_payload:
-        data = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
-        items = [PromptResultItem(**item) for item in data]
+    if raw_payload is not None:
         try:
-            from app.database import get_redis_client
-            redis = await get_redis_client()
-            if redis:
-                await redis.set(f"job_results:{job_id}", json.dumps(data), ex=3600)
-        except Exception:
-            pass
-        return items
+            data = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+            items = [PromptResultItem(**item) for item in data]
+            try:
+                from app.database import get_redis_client
+                redis = await get_redis_client()
+                if redis:
+                    await redis.set(f"job_results:{job_id}", json.dumps(data), ex=3600)
+            except Exception:
+                pass
+            return items
+        except Exception as e:
+            logger.warning(f"Error deserializing results_payload for job {job_id}: {e}")
+            return []
 
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,

@@ -9,6 +9,7 @@ import {
   CircleDollarSign,
   Command,
   Cpu,
+  Download,
   FlaskConical,
   Layers3,
   LoaderCircle,
@@ -57,6 +58,30 @@ const Topology = dynamic(() => import("./Topology"), {
 const SIMULATED = process.env.NEXT_PUBLIC_MOCK_FALLBACK === "true";
 type Log = { id: number; time: string; text: string; tone: string };
 
+const NAV_ITEMS = [
+  { id: "overview", label: "Overview / Mission Control", icon: Command, href: "#overview" },
+  { id: "batch", label: "Batch Ingestion & Jobs", icon: Layers3, href: "#batch" },
+  { id: "network", label: "Topology & Spot Swarm", icon: Cpu, href: "#network" },
+  { id: "telemetry", label: "Live Telemetry", icon: Activity, href: "#telemetry" },
+  { id: "settlement", label: "Settlement Ledger & PayPal", icon: Wallet, href: "#settlement" },
+  { id: "verification", label: "Dev Mode & Chaos Injection", icon: FlaskConical, href: "#verification" },
+];
+
+const QUICK_TEMPLATES = [
+  {
+    name: "Summarize Architecture",
+    text: "Explain how verified inference protects a batch workload in one sentence.",
+  },
+  {
+    name: "Math Canary Test",
+    text: "Calculate step-by-step: 47 * 89 + 1337 and state all prime factors.",
+  },
+  {
+    name: "JSON Extraction",
+    text: "Extract key entities and JSON schema for an autonomous AI compute agreement.",
+  },
+];
+
 export default function MissionControl() {
   const [confidential, setConfidential] = useState(true);
   const [providers, setProviders] = useState<Provider[]>(SIMULATED ? demoProviders : []);
@@ -70,13 +95,14 @@ export default function MissionControl() {
   const [slashed, setSlashed] = useState(false);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
-  const [prompt, setPrompt] = useState(
-    "Explain how verified inference protects a batch workload in one sentence."
-  );
+  const [prompt, setPrompt] = useState("");
   const [promptCount, setPromptCount] = useState(50);
   const [budget, setBudget] = useState("1.00");
   const [adminKey, setAdminKey] = useState("");
   const [modal, setModal] = useState(false);
+  const [modalView, setModalView] = useState<"config" | "progress" | "results">("config");
+  const [jobResults, setJobResults] = useState<any[] | null>(null);
+  const [activeTab, setActiveTab] = useState("overview");
   const [lastBatch, setLastBatch] = useState<{ batch_id: string; status: string } | null>(null);
   const [retry, setRetry] = useState(0);
   const eventId = useRef(0);
@@ -121,6 +147,70 @@ export default function MissionControl() {
         : "Mission Control initialized. Waiting for engine telemetry."
     );
   }, [addLog]);
+
+  useEffect(() => {
+    const sectionIds = [
+      "overview",
+      "batch",
+      "network",
+      "telemetry",
+      "settlement",
+      "verification",
+    ];
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setActiveTab(entry.target.id);
+          }
+        }
+      },
+      { rootMargin: "-15% 0px -65% 0px", threshold: 0.1 }
+    );
+
+    sectionIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!job || job.status !== "COMPLETED") return;
+    let cancelled = false;
+    const fetchResults = async () => {
+      try {
+        const results = SIMULATED
+          ? Array.from({ length: job.total_prompts }, (_, i) => ({
+              prompt_index: i,
+              status: "SIMULATED",
+              executing_node_id:
+                job.sensitivity === "CONFIDENTIAL"
+                  ? "nebius-h100-anchor"
+                  : i % 2 === 0
+                  ? "nebius-h100-anchor"
+                  : "spot-provider-alpha",
+              output_text:
+                "Verified inference audits each batch before releasing node payment.",
+              input_tokens: 32,
+              output_tokens: 64,
+            }))
+          : await getJobResults(job.job_id);
+        if (!cancelled) {
+          const sorted = results.sort((a, b) => a.prompt_index - b.prompt_index);
+          setJobResults(sorted);
+          setModalView("results");
+        }
+      } catch (e) {
+        console.warn("[MissionControl] Could not fetch reassembled results:", e);
+      }
+    };
+    void fetchResults();
+    return () => {
+      cancelled = true;
+    };
+  }, [job?.job_id, job?.status]);
 
   useEffect(() => {
     let stopped = false;
@@ -169,11 +259,34 @@ export default function MissionControl() {
             ...metrics.find((t) => t.node_id === p.node_id),
           }))
         );
-        setHttpError(
-          telemetry.status === "rejected"
-            ? "Rolling throughput is temporarily unavailable."
-            : ""
-        );
+
+        // Resilient Fallback: populate snapshot nodes from HTTP telemetry when WS is offline or snapshot empty
+        setSnapshot((prev) => {
+          if (connection !== "Live" || prev.nodes.length === 0) {
+            return {
+              ts: Date.now(),
+              nodes: metrics.map((m) => {
+                const existing = prev.nodes.find((n) => n.node_id === m.node_id);
+                return {
+                  node_id: m.node_id,
+                  tokens_per_sec: m.tokens_per_sec,
+                  p95_ttft_ms: m.p95_ttft_ms,
+                  p50_ttft_ms: existing?.p50_ttft_ms ?? Math.round(m.p95_ttft_ms * 0.6),
+                  error_rate: existing?.error_rate ?? 0,
+                  active_requests: existing?.active_requests ?? 0,
+                  status: existing?.status ?? "ACTIVE",
+                };
+              }),
+              jobs: prev.jobs,
+            };
+          }
+          return prev;
+        });
+
+        if (connection !== "Live" && connection !== "Connecting") {
+          setConnection("Live (HTTP)");
+        }
+        setHttpError("");
       } catch (e) {
         if (!stopped) setHttpError((e as Error).message);
       } finally {
@@ -181,12 +294,12 @@ export default function MissionControl() {
       }
     };
     void load();
-    const timer = setInterval(load, 5000);
+    const timer = setInterval(load, connection === "Live" ? 5000 : 2500);
     return () => {
       stopped = true;
       clearInterval(timer);
     };
-  }, [retry]);
+  }, [retry, connection]);
 
   useEffect(() => {
     if (SIMULATED) return;
@@ -198,7 +311,6 @@ export default function MissionControl() {
 
     function connect() {
       if (disposed) return;
-      setConnection("Connecting");
       try {
         socket = new WebSocket(getWebSocketTelemetryUrl());
         socket.onopen = () => {
@@ -220,18 +332,20 @@ export default function MissionControl() {
             lastMessage = Date.now();
             setSnapshot(data);
           } catch {
-            setConnection("Invalid telemetry");
+            // Keep existing snapshot; do not throw uncaught error
           }
         };
-        socket.onerror = () => socket?.close();
+        socket.onerror = () => {
+          socket?.close();
+        };
         socket.onclose = () => {
           if (disposed) return;
-          setConnection("Reconnecting");
+          setConnection("Reconnecting (HTTP Fallback)");
           timer = setTimeout(connect, delay);
           delay = Math.min(delay * 2, 10000);
         };
       } catch {
-        setConnection("Disconnected");
+        setConnection("HTTP Polling (Fallback)");
         timer = setTimeout(connect, delay);
       }
     }
@@ -243,7 +357,9 @@ export default function MissionControl() {
       disposed = true;
       clearTimeout(timer);
       clearInterval(watchdog);
-      socket?.close();
+      try {
+        socket?.close();
+      } catch {}
     };
   }, [retry]);
 
@@ -403,7 +519,7 @@ export default function MissionControl() {
   );
   const pending = providers.reduce((n, p) => n + p.payout_pending_micros, 0);
   const held = providers.reduce((n, p) => n + p.pending_probation_micros, 0);
-  const throughput = snapshot.nodes.reduce(
+  const throughput = (snapshot.nodes.length > 0 ? snapshot.nodes : providers).reduce(
     (sum, p) =>
       sum +
       (p.tokens_per_sec ??
@@ -430,7 +546,12 @@ export default function MissionControl() {
   }
 
   async function launch() {
-    const lines = prompt.split("\n").filter((p) => p.trim());
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      setNotice("Please enter at least one prompt or select a quick template above.");
+      return;
+    }
+    const lines = trimmed.split("\n").filter((p) => p.trim());
     const micros = Math.round(Number(budget) * 1_000_000);
     if (
       !/^\d+(?:\.\d{1,6})?$/.test(budget) ||
@@ -451,6 +572,7 @@ export default function MissionControl() {
     setBusy("launch");
     setNotice("");
     setAttestations([]);
+    setJobResults(null);
     try {
       const sensitivity = confidential ? "CONFIDENTIAL" : "SYNTHETIC";
       if (SIMULATED) {
@@ -475,6 +597,7 @@ export default function MissionControl() {
             max_tokens_per_prompt: 128,
             max_cost_ceiling_micros: micros,
             makespan_sla_seconds: 120,
+            target_model: "meta-llama/Llama-3.1-8B-Instruct",
           })
         );
       }
@@ -482,7 +605,7 @@ export default function MissionControl() {
         `${SIMULATED ? "Demo" : "Live"} batch submitted · ${promptCount} prompts · ${sensitivity}.`,
         "success"
       );
-      setModal(false);
+      setModalView("progress");
     } catch (e) {
       setNotice((e as Error).message);
     } finally {
@@ -645,21 +768,37 @@ export default function MissionControl() {
         <a href="#overview" className="brand-mark" aria-label="ApexMarket home">
           <Zap size={24} fill="currentColor" />
         </a>
-        <a href="#overview" className="nav-icon selected" aria-label="Overview">
-          <Command size={21} />
-        </a>
-        <a href="#network" className="nav-icon" aria-label="Network">
-          <Layers3 size={21} />
-        </a>
-        <a href="#benchmarks" className="nav-icon" aria-label="Benchmarks">
-          <Activity size={21} />
-        </a>
-        <a href="#settlement" className="nav-icon" aria-label="Settlement">
-          <Wallet size={21} />
-        </a>
+        <nav className="flex flex-col items-center gap-3 w-full" aria-label="Main Navigation">
+          {NAV_ITEMS.map((item) => {
+            const isSelected = activeTab === item.id;
+            return (
+              <div key={item.id} className="relative group flex items-center justify-center w-full px-2">
+                <a
+                  href={item.href}
+                  onClick={() => setActiveTab(item.id)}
+                  className={`nav-icon transition-all duration-150 flex items-center justify-center ${
+                    isSelected
+                      ? "text-emerald-400 bg-emerald-500/10 border-l-2 border-emerald-400 shadow-sm shadow-emerald-500/10"
+                      : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/60"
+                  }`}
+                  aria-label={item.label}
+                  aria-current={isSelected ? "page" : undefined}
+                >
+                  <item.icon size={20} />
+                </a>
+                <div
+                  role="tooltip"
+                  className="pointer-events-none absolute left-full ml-3 hidden md:flex items-center px-2.5 py-1 rounded-md bg-slate-900 border border-slate-700/80 text-xs font-medium text-slate-100 whitespace-nowrap shadow-xl opacity-0 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 z-50"
+                >
+                  {item.label}
+                </div>
+              </div>
+            );
+          })}
+        </nav>
         <div className="sidebar-bottom">
           <span className="environment-dot" />
-          <span>DEV</span>
+          <span className="text-xs text-slate-400 font-semibold tracking-wider">DEV</span>
         </div>
       </aside>
       <div className="workspace" id="overview">
@@ -695,8 +834,13 @@ export default function MissionControl() {
             </div>
             <button
               className="primary"
-              onClick={() => setModal(true)}
-              disabled={running || !!busy}
+              onClick={() => {
+                if (running) setModalView("progress");
+                else if (jobResults && job?.status === "COMPLETED") setModalView("results");
+                else setModalView("config");
+                setModal(true);
+              }}
+              disabled={!!busy}
             >
               <Zap size={15} /> Launch batch <ArrowRight size={15} />
             </button>
@@ -819,57 +963,90 @@ export default function MissionControl() {
                 <span className="pill muted">5 TIERS</span>
               </div>
               <div className="tier-list">
-                {tiers.map((tier, i) => (
-                  <div
-                    className={`tier ${
-                      tier.value.includes("reject") ||
-                      tier.value === "Rejected" ||
-                      tier.value.includes("spike")
-                        ? "failed"
-                        : ""
-                    }`}
-                    key={tier.name}
-                  >
-                    <span className="tier-index">0{i + 1}</span>
-                    <div>
-                      <strong>{tier.name}</strong>
-                      <span>{tier.detail}</span>
+                {tiers.map((tier, i) => {
+                  const isFailed =
+                    tier.value.includes("reject") ||
+                    tier.value === "Rejected" ||
+                    tier.value.includes("spike");
+                  const isActive =
+                    tier.value === "Active" ||
+                    tier.value === "Ready" ||
+                    tier.value === "Recorded";
+                  return (
+                    <div
+                      className={`tier py-3 flex items-center gap-3 border-b border-slate-800/80 ${
+                        isFailed ? "failed" : ""
+                      }`}
+                      key={tier.name}
+                    >
+                      <span className="tier-index text-sm font-mono text-slate-300 font-medium w-6">
+                        0{i + 1}
+                      </span>
+                      <div className="flex-1">
+                        <strong className="text-sm font-medium text-slate-100 block">
+                          {tier.name}
+                        </strong>
+                        <span className="text-xs text-slate-400 leading-relaxed block mt-0.5">
+                          {tier.detail}
+                        </span>
+                      </div>
+                      <span
+                        className={`px-2.5 py-1 rounded text-xs font-medium border ${
+                          isFailed
+                            ? "bg-red-500/15 text-red-300 border-red-500/30"
+                            : isActive
+                            ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                            : "bg-slate-800/80 text-slate-300 border border-slate-700/70"
+                        }`}
+                      >
+                        {tier.value}
+                      </span>
                     </div>
-                    <b>{tier.value}</b>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className={`verification-note ${rejected ? "danger" : ""}`}>
                 <ShieldCheck size={19} />
                 <div>
-                  <strong>
+                  <strong className="text-sm font-medium text-slate-100 block">
                     {rejected ? "Corrupted shred rejected" : "Every payout starts with proof"}
                   </strong>
-                  <p>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
                     {rejected
                       ? "Failed output earns no payout. Unverified prompts route to the trusted anchor."
                       : "Only verified work earns a ledger credit. Attestations protect the settlement boundary."}
                   </p>
                 </div>
               </div>
-              <button
-                className={`chaos-button ${slashed ? "restore" : ""}`}
-                onClick={injectDrift}
-                disabled={!!busy || confidential || (!SIMULATED && !adminKey)}
-              >
-                {busy === "drift" ? (
-                  <LoaderCircle size={15} className="spin" />
-                ) : slashed ? (
-                  <RotateCcw size={15} />
-                ) : (
-                  <FlaskConical size={15} />
+              <div className="relative group w-full">
+                <button
+                  className={`chaos-button ${slashed ? "restore" : ""}`}
+                  onClick={injectDrift}
+                  disabled={!!busy || confidential || (!SIMULATED && !adminKey)}
+                  title={confidential ? "Disabled: Confidential workloads never touch third-party spot nodes" : undefined}
+                >
+                  {busy === "drift" ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : slashed ? (
+                    <RotateCcw size={15} />
+                  ) : (
+                    <FlaskConical size={15} />
+                  )}
+                  {slashed ? "Restore honest provider" : "Inject INT4 quantization drift"}
+                  <span>{SIMULATED ? "DEMO" : "MOCK"}</span>
+                </button>
+                {confidential && (
+                  <div
+                    role="tooltip"
+                    className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex items-center px-3 py-1.5 rounded-md bg-slate-900 border border-slate-700 text-xs font-medium text-amber-300 whitespace-nowrap shadow-xl z-50"
+                  >
+                    Disabled: Confidential workloads never touch third-party spot nodes
+                  </div>
                 )}
-                {slashed ? "Restore honest provider" : "Inject INT4 quantization drift"}
-                <span>{SIMULATED ? "DEMO" : "MOCK"}</span>
-              </button>
-              <p className="fine-print">
+              </div>
+              <p className="fine-print text-xs text-slate-400">
                 {confidential
-                  ? "Disable the air-gap to test a synthetic workload on spot compute."
+                  ? "Disabled: Confidential workloads never touch third-party spot nodes."
                   : "Chaos changes only the configured local mock provider."}
               </p>
             </section>
@@ -1028,8 +1205,20 @@ export default function MissionControl() {
           >
             <div className="panel-heading">
               <div>
-                <div className="eyebrow">NEW WORKLOAD</div>
-                <h2 id="batch-title">Launch a verified batch</h2>
+                <div className="eyebrow">
+                  {modalView === "results"
+                    ? "REASSEMBLED OUTPUTS"
+                    : modalView === "progress"
+                    ? "ACTIVE INFERENCE STREAM"
+                    : "NEW WORKLOAD"}
+                </div>
+                <h2 id="batch-title">
+                  {modalView === "results"
+                    ? "Batch Prompt Results"
+                    : modalView === "progress"
+                    ? "Batch in Execution"
+                    : "Launch a verified batch"}
+                </h2>
               </div>
               <button
                 className="close-button"
@@ -1039,60 +1228,202 @@ export default function MissionControl() {
                 ×
               </button>
             </div>
-            <label>
-              Prompt templates{" "}
-              <small>One per line, repeated to fill the batch</small>
-              <textarea
-                autoFocus
-                rows={4}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-              />
-            </label>
-            <div className="form-row">
-              <label>
-                Prompt count
-                <input
-                  type="number"
-                  min="1"
-                  max="5000"
-                  value={promptCount}
-                  onChange={(e) => setPromptCount(Number(e.target.value))}
-                />
-              </label>
-              <label>
-                Maximum spend (USD)
-                <input
-                  type="number"
-                  min="0.000001"
-                  max="100"
-                  step="0.000001"
-                  value={budget}
-                  onChange={(e) => setBudget(e.target.value)}
-                />
-              </label>
-            </div>
-            <div className="modal-policy">
-              <LockKeyhole size={16} />
-              <span>
-                {confidential
-                  ? "CONFIDENTIAL · trusted Nebius anchor only"
-                  : "SYNTHETIC · verified multi-provider routing"}
-              </span>
-            </div>
-            {notice && (
-              <p role="alert" className="form-error">
-                {notice}
-              </p>
+
+            {modalView === "progress" && job && (
+              <div className="modal-progress-view space-y-4 my-2">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-slate-400">Job ID:</span>
+                    <strong className="text-xs font-mono text-slate-100">{job.job_id.slice(0, 13)}…</strong>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded text-xs font-medium border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                      {job.sensitivity}
+                    </span>
+                    <span className="px-2 py-0.5 rounded text-xs font-medium border border-blue-500/30 bg-blue-500/10 text-blue-300 animate-pulse">
+                      {job.status}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="batch-progress my-4">
+                  <div className="flex justify-between text-xs text-slate-300 mb-1.5">
+                    <span>{done} / {job.total_prompts} prompts complete</span>
+                    <b className="font-semibold text-emerald-400">
+                      {job.total_prompts > 0 ? Math.round((done / job.total_prompts) * 100) : 0}%
+                    </b>
+                  </div>
+                  <progress max={job.total_prompts} value={done} className="w-full h-2 rounded bg-slate-800" />
+                </div>
+
+                <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800/80 text-xs text-slate-400 space-y-1.5">
+                  <div className="flex items-center gap-2 text-emerald-400 font-medium">
+                    <LoaderCircle size={14} className="spin" />
+                    <span>Streaming shreds & validating canaries across node swarm…</span>
+                  </div>
+                  <p className="text-slate-400 text-xs leading-relaxed">
+                    Outputs are cryptographically attested and reassembled in original prompt index order. Results will appear automatically on completion.
+                  </p>
+                </div>
+
+                {job.status === "COMPLETED" && (
+                  <button
+                    className="primary w-full mt-4 text-xs font-semibold py-2.5"
+                    onClick={() => setModalView("results")}
+                  >
+                    View Reassembled Results <ArrowRight size={15} />
+                  </button>
+                )}
+              </div>
             )}
-            <button className="primary" disabled={!!busy} onClick={launch}>
-              {busy === "launch" ? (
-                <LoaderCircle size={16} className="spin" />
-              ) : (
-                <Zap size={16} />
-              )}{" "}
-              {SIMULATED ? "Launch demo batch" : "Launch batch"}
-            </button>
+
+            {modalView === "results" && jobResults && (
+              <div className="modal-results-view space-y-4 my-2">
+                <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+                  <div>
+                    <div className="text-xs text-slate-400">Total Processed</div>
+                    <strong className="text-sm text-slate-100 font-mono">{jobResults.length} prompts</strong>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400">Settled Cost</div>
+                    <strong className="text-sm text-emerald-400 font-mono">{usd(job?.actual_settled_cost_micros ?? 0)}</strong>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-400">Target Model</div>
+                    <strong className="text-xs text-slate-300 font-mono">Llama-3.1-8B</strong>
+                  </div>
+                </div>
+
+                <div className="max-h-72 overflow-y-auto space-y-2 pr-1 border border-slate-800/80 rounded-lg p-2 bg-slate-950/50">
+                  {jobResults.map((item) => (
+                    <div key={item.prompt_index} className="p-2.5 rounded bg-slate-900/90 border border-slate-800/90 text-xs">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-mono font-semibold text-emerald-400">Prompt #{item.prompt_index + 1}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-400 text-xs font-mono">{item.executing_node_id}</span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                            {item.status}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-slate-200 text-xs leading-relaxed font-sans">{item.output_text}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    className="secondary flex-1 justify-center py-2.5 text-xs font-medium"
+                    onClick={downloadResults}
+                    disabled={busy === "results"}
+                  >
+                    {busy === "results" ? <LoaderCircle size={14} className="spin" /> : <Download size={14} />} Download JSON
+                  </button>
+                  <button
+                    className="primary flex-1 justify-center py-2.5 text-xs font-medium"
+                    onClick={() => {
+                      setModalView("config");
+                      setPrompt("");
+                    }}
+                  >
+                    Configure New Batch
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {modalView === "config" && (
+              <>
+                <div className="quick-templates my-2">
+                  <div className="text-xs text-slate-300 font-medium mb-1.5">Quick Templates:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {QUICK_TEMPLATES.map((tmpl) => (
+                      <button
+                        key={tmpl.name}
+                        type="button"
+                        className="text-xs px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700/80 hover:border-emerald-500/50 transition-colors"
+                        onClick={() => setPrompt(tmpl.text)}
+                      >
+                        {tmpl.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <label className="block mt-3">
+                  <span className="text-xs font-medium text-slate-200">Prompt templates</span>{" "}
+                  <small className="text-xs text-slate-400 block mt-0.5">One per line, repeated to fill the batch</small>
+                  <textarea
+                    autoFocus
+                    rows={4}
+                    placeholder="Explain how verified inference protects a batch workload in one sentence, or enter custom prompts..."
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    className="w-full mt-2 p-2.5 bg-slate-950 border border-slate-700 rounded text-xs text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-emerald-500"
+                  />
+                </label>
+
+                <div className="form-row my-3">
+                  <label className="text-xs text-slate-200">
+                    Prompt count
+                    <input
+                      type="number"
+                      min="1"
+                      max="5000"
+                      value={promptCount}
+                      onChange={(e) => setPromptCount(Number(e.target.value))}
+                      className="w-full mt-1.5 p-2 bg-slate-950 border border-slate-700 rounded text-xs text-slate-100"
+                    />
+                  </label>
+                  <label className="text-xs text-slate-200">
+                    Maximum spend (USD)
+                    <input
+                      type="number"
+                      min="0.000001"
+                      max="100"
+                      step="0.000001"
+                      value={budget}
+                      onChange={(e) => setBudget(e.target.value)}
+                      className="w-full mt-1.5 p-2 bg-slate-950 border border-slate-700 rounded text-xs text-slate-100"
+                    />
+                  </label>
+                </div>
+
+                <div className="modal-policy my-3 flex items-center gap-2 p-3 rounded bg-emerald-950/20 border border-emerald-500/30 text-emerald-300 text-xs">
+                  <LockKeyhole size={16} className="text-emerald-400 shrink-0" />
+                  <span>
+                    {confidential
+                      ? "CONFIDENTIAL · trusted Nebius anchor only"
+                      : "SYNTHETIC · verified multi-provider routing"}
+                  </span>
+                </div>
+
+                {notice && (
+                  <p role="alert" className="form-error text-xs text-red-400 my-2">
+                    {notice}
+                  </p>
+                )}
+
+                <button className="primary w-full mt-3 text-xs font-semibold py-2.5" disabled={!!busy} onClick={launch}>
+                  {busy === "launch" ? (
+                    <LoaderCircle size={16} className="spin" />
+                  ) : (
+                    <Zap size={16} />
+                  )}{" "}
+                  {SIMULATED ? "Launch demo batch" : "Launch batch"}
+                </button>
+
+                {jobResults && (
+                  <button
+                    type="button"
+                    className="text-button w-full justify-center text-xs text-slate-400 hover:text-slate-200 mt-2 py-1"
+                    onClick={() => setModalView("results")}
+                  >
+                    View previous batch results ({jobResults.length} items)
+                  </button>
+                )}
+              </>
+            )}
           </section>
         </div>
       )}
@@ -1117,15 +1448,15 @@ function Metric({
 }) {
   return (
     <section className={`metric-card ${accent ? "accent" : ""}`}>
-      <div className="metric-label">
+      <div className="metric-label text-xs font-semibold text-slate-300">
         {label}
-        <span>{icon}</span>
+        <span className={accent ? "text-emerald-400" : "text-sky-400"}>{icon}</span>
       </div>
-      <div className="metric-value">
+      <div className="metric-value text-2xl font-semibold text-slate-100">
         {value}
-        <small>{suffix}</small>
+        <small className="text-xs text-slate-400 ml-1.5">{suffix}</small>
       </div>
-      <p>{detail}</p>
+      <p className="text-xs text-slate-400 mt-1">{detail}</p>
     </section>
   );
 }

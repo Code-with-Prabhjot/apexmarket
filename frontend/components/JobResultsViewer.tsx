@@ -23,12 +23,12 @@ export default function JobResultsViewer({
   return (
     <section className="panel batch-panel" id="batch">
       <div className="batch-title">
-        <Layers3 size={19} />
+        <Layers3 size={19} className="text-emerald-400" />
         <div>
-          <strong>
+          <strong className="text-sm font-semibold text-slate-100 block">
             {job ? `Batch ${job.job_id.slice(0, 8)}` : "Ready for your next batch"}
           </strong>
-          <span>
+          <span className="text-xs text-slate-300 block mt-1">
             {job
               ? `${job.total_prompts} prompts · ${job.sensitivity} · ${job.status}`
               : "Privacy defaults to CONFIDENTIAL. Submit up to 5,000 prompts."}
@@ -38,11 +38,11 @@ export default function JobResultsViewer({
       {job ? (
         <>
           <div className="batch-progress">
-            <div>
+            <div className="flex justify-between text-xs text-slate-300 mb-1">
               <span>
                 {done} / {job.total_prompts} complete
               </span>
-              <b>
+              <b className="text-xs font-semibold text-emerald-400">
                 {job.total_prompts > 0
                   ? Math.round((done / job.total_prompts) * 100)
                   : 0}
@@ -51,12 +51,12 @@ export default function JobResultsViewer({
             </div>
             <progress max={job.total_prompts} value={done} />
           </div>
-          <div className="batch-cost">
+          <div className="batch-cost text-sm font-mono font-medium text-slate-100">
             {usd(job.actual_settled_cost_micros)}
-            <small>verified cost</small>
+            <small className="block text-xs text-slate-400 mt-0.5">verified cost</small>
           </div>
           <button
-            className="secondary"
+            className="secondary text-xs font-medium"
             disabled={running || !!busy}
             onClick={onDownload}
           >
@@ -69,7 +69,7 @@ export default function JobResultsViewer({
           </button>
         </>
       ) : (
-        <button className="text-button" onClick={onOpenModal}>
+        <button className="text-button text-xs font-medium" onClick={onOpenModal}>
           Configure batch <ArrowRight size={15} />
         </button>
       )}

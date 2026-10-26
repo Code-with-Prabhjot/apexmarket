@@ -295,7 +295,13 @@ class JobOrchestrationService:
                 )
                 await db.commit()
 
-                shred_prompts = [prompt_map[idx] for idx in prompt_indices]
+                shred_prompts = [
+                    prompt_map.get(
+                        idx,
+                        request.prompts[idx] if (isinstance(idx, int) and 0 <= idx < len(request.prompts)) else request.prompts[0],
+                    )
+                    for idx in prompt_indices
+                ]
 
                 # Canaries are generated for spot nodes; anchor is ground truth
                 canary_specs = []
@@ -331,7 +337,7 @@ class JobOrchestrationService:
 
                 if not transport_error:
                     for spec, res in zip(canary_specs, canary_raw):
-                        text_val, _, _, _ = res
+                        text_val = res[0] if isinstance(res, (list, tuple)) and len(res) > 0 else str(res)
                         is_valid = CanaryProbeEngine.verify_canary_output(text_val, spec["expected"])
                         canary_evals.append((is_valid, "ok" if is_valid else f"Expected {spec['expected']} got {text_val}"))
 
@@ -588,15 +594,24 @@ class JobOrchestrationService:
                         {"job_id": job_id},
                     )
                 ).fetchone()
-                if job_row:
-                    await LedgerService.release_unused_escrow_and_settle_job(
-                        db=db,
-                        client_id=client_id,
-                        job_id=job_id,
-                        total_reserved_micros=job_row.reserved_escrow_micros,
-                        actual_settled_micros=0,
-                        baseline_cost_micros=job_row.baseline_anchor_cost_micros,
-                    )
+                reserved = (
+                    getattr(job_row, "reserved_escrow_micros", None)
+                    or (job_row[0] if job_row and len(job_row) > 0 else None)
+                    or request.max_cost_ceiling_micros
+                )
+                baseline = (
+                    getattr(job_row, "baseline_anchor_cost_micros", None)
+                    or (job_row[1] if job_row and len(job_row) > 1 else None)
+                    or request.max_cost_ceiling_micros
+                )
+                await LedgerService.release_unused_escrow_and_settle_job(
+                    db=db,
+                    client_id=client_id,
+                    job_id=job_id,
+                    total_reserved_micros=reserved,
+                    actual_settled_micros=0,
+                    baseline_cost_micros=baseline,
+                )
                 await db.execute(
                     text("""
                         UPDATE batch_jobs
@@ -610,6 +625,7 @@ class JobOrchestrationService:
                 await db.commit()
             except Exception as cleanup_err:
                 logger.error(f"Failed to release escrow during abort cleanup: {cleanup_err}")
+                await db.rollback()
             raise
         finally:
             if owns_client:

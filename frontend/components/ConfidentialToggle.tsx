@@ -19,8 +19,8 @@ export default function ConfidentialToggle({
         <LockKeyhole size={17} />
       </div>
       <div>
-        <strong>Confidential air-gap</strong>
-        <span>
+        <strong className="text-sm font-semibold text-slate-100 block">Confidential air-gap</strong>
+        <span className="text-xs text-slate-300 block mt-0.5">
           {confidential
             ? "ON · All new workloads stay on the trusted anchor"
             : "OFF · New synthetic workloads may use spot compute"}

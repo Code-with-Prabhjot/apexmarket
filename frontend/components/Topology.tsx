@@ -30,7 +30,7 @@ export default function Topology({ providers, snapshot, confidential }: { provid
       const speed = live?.tokens_per_sec ?? p.tokens_per_sec;
       nodes.push({ id: p.node_id, type: "provider", position: { x: 415, y: i * 148 }, data: { title: p.provider_name, subtitle: p.node_id, state, anchor: p.trust_tier === "ANCHOR", locked, metric: locked ? "Isolated" : speed !== undefined ? `${speed.toFixed(0)} tok/s` : `${live?.active_requests ?? 0} active` } });
       edges.push({ id: `route-${p.node_id}`, source: "router", target: p.node_id, type: "default", animated: !locked && state !== "offline" && (live?.active_requests ?? 0) > 0,
-        style: { stroke: locked ? "#29364a" : state === "slashed" ? "#f87171" : state === "slow" ? "#f2ba65" : "#65ddba", strokeWidth: locked ? 1 : Math.min(7, 1.5 + (speed !== undefined ? speed / 100 : (live?.active_requests ?? 0) / 3)), opacity: locked ? 0.5 : 0.85 } });
+        style: { stroke: locked ? "#1b2533" : state === "slashed" ? "#f87171" : state === "slow" ? "#f2ba65" : "#65ddba", strokeWidth: locked ? 1 : Math.min(7, 1.5 + (speed !== undefined ? speed / 100 : (live?.active_requests ?? 0) / 3)), opacity: locked ? 0.2 : 0.85 } });
     });
     return { nodes, edges };
   }, [providers, snapshot, confidential]);

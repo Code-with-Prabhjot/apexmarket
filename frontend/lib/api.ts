@@ -41,6 +41,7 @@ export type CreateJobPayload = {
   max_tokens_per_prompt: number;
   max_cost_ceiling_micros: number;
   makespan_sla_seconds?: number;
+  target_model?: string;
 };
 
 /**
