@@ -263,6 +263,20 @@ class ClientBalanceResponse(BaseModel):
     locked_escrow_usd: str
 
 
+class TopUpCreateRequest(BaseModel):
+    """Prepaid balance top-up amount; limits are enforced from settings by the service."""
+    amount_micros: int = Field(..., gt=0)
+
+
+class TopUpResponse(BaseModel):
+    """State of a prepaid PayPal top-up."""
+    topup_id: uuid.UUID
+    paypal_order_id: Optional[str] = None
+    approve_url: Optional[str] = None
+    amount_micros: int
+    status: str
+
+
 class LedgerEntryCreate(BaseModel):
     """Double-entry transaction input model."""
     idempotency_key: str = Field(..., min_length=1)

@@ -177,6 +177,25 @@ CREATE TABLE IF NOT EXISTS payout_items (
 CREATE INDEX IF NOT EXISTS idx_payout_items_batch_id ON payout_items(batch_id);
 CREATE INDEX IF NOT EXISTS idx_payout_items_node_id ON payout_items(node_id);
 
+-- -----------------------------------------------------------------------------
+-- 7. PREPAID CLIENT TOP-UPS (PAYPAL ORDERS V2)
+-- topup_id is our idempotency key with PayPal and the order's custom_id, so a
+-- capture can only ever credit the client and amount recorded here.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS paypal_topups (
+    topup_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    client_id UUID NOT NULL REFERENCES clients(client_id),
+    paypal_order_id TEXT UNIQUE,
+    paypal_capture_id TEXT UNIQUE,
+    amount_micros BIGINT NOT NULL CHECK (amount_micros > 0),
+    status TEXT NOT NULL DEFAULT 'CREATED' CHECK (status IN ('CREATED', 'CAPTURED', 'FAILED')),
+    is_vaulted_charge BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    captured_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_paypal_topups_client_id ON paypal_topups(client_id);
+
 -- Snapshot payout destinations so a retry never changes a reserved batch payload.
 ALTER TABLE payout_items ADD COLUMN IF NOT EXISTS payout_receiver_email TEXT;
 
