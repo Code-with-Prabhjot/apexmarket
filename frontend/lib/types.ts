@@ -7,7 +7,12 @@ export type TelemetryNode = {
   node_id: string; status: string; active_requests: number; p50_ttft_ms: number;
   p95_ttft_ms: number; error_rate: number; tokens_per_sec?: number;
 };
-export type Snapshot = { ts: number; nodes: TelemetryNode[]; jobs: Record<string, { total: number; done: number; failovers: number }> };
+export type Snapshot = {
+  ts: number;
+  nodes: TelemetryNode[];
+  jobs: Record<string, { total: number; done: number; failovers: number }>;
+  events?: Array<{ id: number; time: string; text: string; tone: string }>;
+};
 export type Job = {
   job_id: string; status: string; sensitivity: string; total_prompts: number;
   actual_settled_cost_micros: number; platform_fee_micros: number;

@@ -98,7 +98,7 @@ export default function MissionControl() {
   const [prompt, setPrompt] = useState("");
   const [promptCount, setPromptCount] = useState(50);
   const [budget, setBudget] = useState("1.00");
-  const [adminKey, setAdminKey] = useState("");
+  const [adminKey, setAdminKey] = useState("apex-demo-2026");
   const [modal, setModal] = useState(false);
   const [modalView, setModalView] = useState<"config" | "progress" | "results">("config");
   const [jobResults, setJobResults] = useState<any[] | null>(null);
@@ -106,6 +106,7 @@ export default function MissionControl() {
   const [lastBatch, setLastBatch] = useState<{ batch_id: string; status: string } | null>(null);
   const [retry, setRetry] = useState(0);
   const eventId = useRef(0);
+  const loggedEvents = useRef<Set<string>>(new Set());
   const simulatedDone = useRef(0);
   const jobRef = useRef(job);
   jobRef.current = job;
@@ -331,6 +332,15 @@ export default function MissionControl() {
               throw new Error("Invalid snapshot");
             lastMessage = Date.now();
             setSnapshot(data);
+            if (Array.isArray(data.events)) {
+              for (const ev of data.events) {
+                const key = `${ev.text}_${ev.time}`;
+                if (!loggedEvents.current.has(key)) {
+                  loggedEvents.current.add(key);
+                  addLog(ev.text, ev.tone || "warning");
+                }
+              }
+            }
           } catch {
             // Keep existing snapshot; do not throw uncaught error
           }
@@ -434,6 +444,20 @@ export default function MissionControl() {
         if (!stopped) {
           setJob(current);
           setAttestations(evidence);
+          if (Array.isArray(evidence)) {
+            for (const att of evidence) {
+              if (att.status === "VERIFIED_FAIL_REROUTED") {
+                const key = `quarantine_${att.node_id}_${att.shred_id}`;
+                if (!loggedEvents.current.has(key)) {
+                  loggedEvents.current.add(key);
+                  addLog(
+                    `[QUARANTINE] Node ${att.node_id} failed canary audit. Rerouting prompts to Nebius Anchor.`,
+                    "danger"
+                  );
+                }
+              }
+            }
+          }
           if (!["RUNNING", "QUEUED"].includes(current.status))
             addLog(
               `Batch ${current.status.toLowerCase()}. Cost ${usd(

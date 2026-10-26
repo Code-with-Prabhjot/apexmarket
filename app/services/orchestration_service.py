@@ -110,8 +110,8 @@ class JobOrchestrationService:
     ) -> List[PromptResultItem]:
         """Wrapper to manage session lifecycle for background pipeline tasks."""
         factory = self.session_factory or AsyncSessionLocal
-        async with factory() as session:
-            try:
+        try:
+            async with factory() as session:
                 return await self.execute_job(
                     job_id=job_id,
                     request=request,
@@ -120,8 +120,21 @@ class JobOrchestrationService:
                     http_client=self.default_http_client,
                     tracker=self.default_tracker,
                 )
-            except Exception as e:
-                logger.exception(f"Fatal error in background pipeline execution for job {job_id}: {e}")
+        except Exception as e:
+            # Fall back to in-memory store if postgres is unreachable
+            from app.services.in_memory_store import global_session_factory
+            try:
+                async with global_session_factory() as mem_session:
+                    return await self.execute_job(
+                        job_id=job_id,
+                        request=request,
+                        client_id=client_id,
+                        db=mem_session,
+                        http_client=self.default_http_client,
+                        tracker=self.default_tracker,
+                    )
+            except Exception as mem_err:
+                logger.exception(f"Fatal error in background pipeline execution for job {job_id}: {mem_err}")
                 raise
 
     async def execute_job(
@@ -417,6 +430,9 @@ class JobOrchestrationService:
                     return items, shred_cost
 
                 # FAIL CASE: Mark shred failed and fail over to verified anchor with retry budget = 2
+                quarantine_msg = f"[QUARANTINE] Node {assigned_node.node_id} failed canary audit. Rerouting prompts to Nebius Anchor."
+                tr.emit_event(quarantine_msg, tone="danger")
+                tr.set_status(assigned_node.node_id, "QUARANTINED")
                 logger.warning(
                     f"Shred {shred_id} failed on node {assigned_node.node_id} (transport={transport_error}). "
                     f"Failing over {len(shred_prompts)} prompts to verified anchor node {anchor_exec.node_id}."

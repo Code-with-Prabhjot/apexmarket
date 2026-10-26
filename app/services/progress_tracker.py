@@ -9,11 +9,21 @@ class ProgressTracker:
         self.window = window
         self.nodes: Dict[str, dict] = {}
         self.jobs: Dict[str, dict] = {}
+        self.events: deque = deque(maxlen=100)
 
     def _node(self, node_id: str) -> dict:
         return self.nodes.setdefault(node_id, {
             "ttft": deque(maxlen=self.window), "ok": deque(maxlen=self.window),
             "active": 0, "status": "ACTIVE"})
+
+    def emit_event(self, text: str, tone: str = "warning") -> None:
+        """Appends a structured event log to the live telemetry stream."""
+        self.events.append({
+            "id": int(time.time() * 1000),
+            "time": time.strftime("%H:%M:%S", time.gmtime()),
+            "text": text,
+            "tone": tone,
+        })
 
     def record(self, node_id: str, ttft_ms: float | None, ok: bool) -> None:
         n = self._node(node_id)
@@ -48,7 +58,7 @@ class ProgressTracker:
                 "p50_ttft_ms": t[len(t) // 2] if t else 0.0,
                 "p95_ttft_ms": t[min(len(t) - 1, int(len(t) * 0.95))] if t else 0.0,
                 "error_rate": round(err, 4)})
-        return {"ts": time.time(), "nodes": nodes, "jobs": self.jobs}
+        return {"ts": time.time(), "nodes": nodes, "jobs": self.jobs, "events": list(self.events)}
 
 
 tracker = ProgressTracker()

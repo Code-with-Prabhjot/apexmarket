@@ -1,6 +1,7 @@
 import type { Job, Provider } from "./types";
 
 export type Attestation = {
+  shred_id?: string;
   status: string;
   node_id: string;
   canary_pass_rate: number | null;

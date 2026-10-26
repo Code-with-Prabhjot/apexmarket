@@ -20,7 +20,7 @@ from app.schemas import WorkloadSensitivity, NodeTrustTier
 
 settings = get_settings()
 
-SHRED_SIZE = 50  # Up to 50 prompts per shred
+SHRED_SIZE = 25  # Up to 25 prompts per shred for multi-provider concurrency
 
 
 @dataclass

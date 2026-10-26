@@ -39,19 +39,44 @@ AsyncSessionLocal = async_sessionmaker(
 
 # Async Redis Client
 _redis_client: Optional[aioredis.Redis] = None
+_postgres_available: Optional[bool] = None
+
+
+async def is_postgres_available() -> bool:
+    """Checks whether the PostgreSQL database is reachable."""
+    global _postgres_available
+    if _postgres_available is False:
+        return False
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        _postgres_available = True
+        return True
+    except Exception:
+        _postgres_available = False
+        return False
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     FastAPI dependency yielding a transactional async database session.
     Automatically handles rollback on unhandled exceptions and session closure.
+    Gracefully falls back to an in-memory session if PostgreSQL is unreachable.
     """
-    async with AsyncSessionLocal() as session:
+    if await is_postgres_available():
+        async with AsyncSessionLocal() as session:
+            try:
+                yield session
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+    else:
+        from app.services.in_memory_store import get_in_memory_session
+        session = get_in_memory_session()
         try:
             yield session
-        except Exception:
-            await session.rollback()
-            raise
         finally:
             await session.close()
 

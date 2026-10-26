@@ -1344,6 +1344,16 @@ progress::-moz-progress-bar {
   color: #fde68a;
 }
 
+.event.danger .dot {
+  background: var(--red);
+  box-shadow: 0 0 8px rgba(244, 63, 94, 0.4);
+}
+
+.event.danger p {
+  color: #fecdd3;
+  font-weight: 500;
+}
+
 footer {
   display: flex;
   align-items: center;
