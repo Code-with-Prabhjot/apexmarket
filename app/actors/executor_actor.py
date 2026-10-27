@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import httpx
 
+from app.config import get_settings
 from app.services.progress_tracker import ProgressTracker, tracker as default_tracker
 
 
@@ -35,6 +36,45 @@ class ExecNode:
                    c.output_price_per_1m_micros, api_key)
 
 
+class NodeExecutionError(RuntimeError):
+    """Raised when an execution node fails."""
+    pass
+
+
+class UpstreamProviderError(NodeExecutionError):
+    """Raised when an upstream provider fails and mock fallback is not permitted."""
+    pass
+
+
+class NodeCallResult(tuple):
+    """4-tuple subclass preserving (text, input_tokens, output_tokens, ttft_ms) with simulation metadata."""
+    def __new__(cls, text: str, in_t: int, out_t: int, ttft: float, is_simulated: bool = False, execution_mode: str = "LIVE"):
+        obj = super().__new__(cls, (text, in_t, out_t, ttft))
+        obj.is_simulated = is_simulated
+        obj.execution_mode = execution_mode
+        return obj
+
+
+_shared_client: Optional[httpx.AsyncClient] = None
+
+
+def get_shared_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+        )
+    return _shared_client
+
+
+async def close_shared_client() -> None:
+    global _shared_client
+    if _shared_client is not None and not _shared_client.is_closed:
+        await _shared_client.aclose()
+        _shared_client = None
+
+
 @dataclass
 class PromptResult:
     prompt_index: int
@@ -46,6 +86,8 @@ class PromptResult:
     ttft_ms: float = 0.0
     failed_nodes: List[str] = field(default_factory=list)
     error: Optional[str] = None
+    is_simulated: bool = False
+    execution_mode: str = "LIVE" 
 
 
 class ShredExecutor:
@@ -56,15 +98,15 @@ class ShredExecutor:
             raise ValueError("Executor requires an anchor node as last-resort fallback")
         self.nodes: Dict[str, ExecNode] = {n.node_id: n for n in nodes}
         self.sems = {n.node_id: asyncio.Semaphore(max(1, n.max_concurrent)) for n in nodes}
-        self.client = client or httpx.AsyncClient()
-        self._owns_client = client is None
+        self._owns_client = False
+        self.client = client or get_shared_client()
         self.timeout_s = timeout_s
         self.breaker_threshold = breaker_threshold
         self.fail_streak: Dict[str, int] = {n.node_id: 0 for n in nodes}
         self.tracker = tracker or default_tracker
 
     async def aclose(self):
-        if self._owns_client:
+        if self._owns_client and self.client is not None and not self.client.is_closed:
             await self.client.aclose()
 
     def _price(self, n: ExecNode) -> int:
@@ -119,7 +161,7 @@ class ShredExecutor:
         from app.services.verification_service import TokenizerBillingAuthority
         in_t = (usage or {}).get("prompt_tokens") or TokenizerBillingAuthority.count_tokens(prompt)
         out_t = (usage or {}).get("completion_tokens") or TokenizerBillingAuthority.count_tokens(text)
-        return text, in_t, out_t, ttft
+        return NodeCallResult(text, in_t, out_t, ttft, is_simulated=False, execution_mode="LIVE")
 
     async def _call(self, n: ExecNode, prompt: str, max_tokens: int) -> Tuple[str, int, int, float]:
         """Legacy helper for backward compatibility."""
@@ -187,7 +229,7 @@ class ShredExecutor:
 
                     self.fail_streak[node.node_id] = 0
                     self.tracker.record(node.node_id, ttft, True)
-                    return text, in_t, out_t, ttft
+                    return NodeCallResult(text, in_t, out_t, ttft, is_simulated=False, execution_mode="LIVE")
                 except Exception as call_err:
                     is_local_mock = any(
                         node.endpoint_url.startswith(pfx)
@@ -215,10 +257,16 @@ class ShredExecutor:
                         )
                     )
                     if is_local_mock or is_unconfigured_anchor:
-                        text, in_t, out_t, ttft = await self._call_in_process_mock(node, prompt, max_tokens)
-                        self.fail_streak[node.node_id] = 0
-                        self.tracker.record(node.node_id, ttft, True)
-                        return text, in_t, out_t, ttft
+                        settings = get_settings()
+                        if settings.ALLOW_MOCK_FALLBACK and settings.APP_ENV != "production":
+                            text, in_t, out_t, ttft = await self._call_in_process_mock(node, prompt, max_tokens)
+                            self.fail_streak[node.node_id] = 0
+                            self.tracker.record(node.node_id, ttft, True)
+                            return NodeCallResult(text, in_t, out_t, ttft, is_simulated=True, execution_mode="SIMULATED_MOCK")
+                        raise UpstreamProviderError(
+                            f"Node {node.node_id} ({node.endpoint_url}) failed: {call_err}. "
+                            f"Mock fallback rejected (ALLOW_MOCK_FALLBACK={settings.ALLOW_MOCK_FALLBACK}, APP_ENV={settings.APP_ENV})."
+                        ) from call_err
                     raise
             except Exception:
                 self.fail_streak[node.node_id] = self.fail_streak.get(node.node_id, 0) + 1
@@ -237,8 +285,11 @@ class ShredExecutor:
                 res.failed_nodes.append(n.node_id)
                 continue
             try:
-                text, in_t, out_t, ttft = await self.call_node(n, prompt, max_tokens, timeout_s=self.timeout_s)
-            except (httpx.HTTPError, RuntimeError, asyncio.TimeoutError, json.JSONDecodeError) as e:
+                call_res = await self.call_node(n, prompt, max_tokens, timeout_s=self.timeout_s)
+                text, in_t, out_t, ttft = call_res[0], call_res[1], call_res[2], call_res[3]
+                is_sim = getattr(call_res, "is_simulated", False)
+                mode = getattr(call_res, "execution_mode", "LIVE")
+            except (httpx.HTTPError, RuntimeError, asyncio.TimeoutError, json.JSONDecodeError, NodeExecutionError) as e:
                 res.failed_nodes.append(n.node_id)
                 res.error = f"{n.node_id}: {e}"
                 self.tracker.advance(job_id, failover=True)
@@ -249,6 +300,8 @@ class ShredExecutor:
             res.text, res.node_id, res.error = text, n.node_id, None
             res.input_tokens, res.output_tokens = in_t, out_t
             res.cost_micros, res.ttft_ms = cost, ttft
+            res.is_simulated = is_sim
+            res.execution_mode = mode
             break
         else:
             res.error = res.error or "all nodes failed"

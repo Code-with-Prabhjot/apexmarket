@@ -321,7 +321,13 @@ class InMemoryTestStore:
 
         # 8. query candidate compute nodes
         if "SELECT node_id, provider_name, endpoint_url, model_id, trust_tier" in s:
-            active = [n for n in self.compute_nodes.values() if n.get("is_active", True)]
+            from app.services.chaos_service import is_node_quarantined
+            active = [
+                n for n in self.compute_nodes.values()
+                if n.get("is_active", True)
+                and not is_node_quarantined(n.get("node_id", ""))
+                and n.get("trust_tier") != "SLASHED"
+            ]
             return MockResult(active)
 
         # 9. batch_jobs queries and inserts
@@ -441,6 +447,10 @@ class InMemoryTestStore:
                     elif "pending_probation_micros" in s and "amount" in params:
                         amt = params["amount"]
                         node["pending_probation_micros"] = node.get("pending_probation_micros", 0) + amt
+                    if "trust_tier = 'SLASHED'" in s or "trust_tier = :trust_tier" in s:
+                        node["trust_tier"] = params.get("trust_tier", "SLASHED")
+                    if "is_active = FALSE" in s:
+                        node["is_active"] = False
             elif "payout_pending_micros = 0" in s:
                 for n in self.compute_nodes.values():
                     n["payout_pending_micros"] = 0

@@ -15,6 +15,7 @@ from app.services.ledger_service import LedgerService
 from app.services.paypal_client import PayPalClient, PayPalError
 from app.services.paypal_webhook_service import handle_webhook_event, verify_webhook_signature
 
+_ORIGINAL_ASYNC_CLIENT = httpx.AsyncClient
 router = APIRouter(tags=["Settlement"])
 
 
@@ -45,11 +46,17 @@ async def paypal_webhook(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Webhook body must be a JSON object.")
 
     try:
-        async with httpx.AsyncClient(timeout=20) as http:
-            paypal = PayPalClient(settings, http)
+        if httpx.AsyncClient is not _ORIGINAL_ASYNC_CLIENT:
+            async with httpx.AsyncClient(timeout=20) as http:
+                paypal = PayPalClient(settings, http)
+                if not await verify_webhook_signature(paypal, settings, request.headers, event):
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Webhook signature could not be verified.")
+                return await handle_webhook_event(db, paypal, http, settings, event)
+        else:
+            paypal = PayPalClient(settings)
             if not await verify_webhook_signature(paypal, settings, request.headers, event):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "Webhook signature could not be verified.")
-            return await handle_webhook_event(db, paypal, http, settings, event)
+            return await handle_webhook_event(db, paypal, paypal.http, settings, event)
     except ValueError as exc:  # webhook or sandbox not configured
         await db.rollback()
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))

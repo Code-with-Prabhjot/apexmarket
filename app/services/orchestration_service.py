@@ -202,8 +202,9 @@ class JobOrchestrationService:
         owns_client = False
         client = http_client or self.default_http_client
         if client is None:
-            client = httpx.AsyncClient()
-            owns_client = True
+            from app.actors.executor_actor import get_shared_client
+            client = get_shared_client()
+            owns_client = False
 
         try:
             # 2. Query compute nodes and identify verified ANCHOR node via enum check
@@ -425,18 +426,34 @@ class JobOrchestrationService:
                                 output_text=text_val,
                                 input_tokens=in_t,
                                 output_tokens=out_t,
+                                is_simulated=getattr(res, "is_simulated", False),
+                                execution_mode=getattr(res, "execution_mode", "LIVE"),
                             )
                         )
                     return items, shred_cost
 
-                # FAIL CASE: Mark shred failed and fail over to verified anchor with retry budget = 2
+                # FAIL CASE: Mark shred failed, persist quarantine/slashing, and fail over to verified anchor
+                from app.services.chaos_service import quarantine_node
+                quarantine_until = quarantine_node(assigned_node.node_id, duration_minutes=30)
                 quarantine_msg = f"[QUARANTINE] Node {assigned_node.node_id} failed canary audit. Rerouting prompts to Nebius Anchor."
                 tr.emit_event(quarantine_msg, tone="danger")
                 tr.set_status(assigned_node.node_id, "QUARANTINED")
                 logger.warning(
                     f"Shred {shred_id} failed on node {assigned_node.node_id} (transport={transport_error}). "
-                    f"Failing over {len(shred_prompts)} prompts to verified anchor node {anchor_exec.node_id}."
+                    f"Quarantined node until {quarantine_until.isoformat()}. Failing over {len(shred_prompts)} prompts to verified anchor node {anchor_exec.node_id}."
                 )
+                try:
+                    await db.execute(
+                        text("""
+                            UPDATE compute_nodes
+                            SET trust_tier = 'SLASHED',
+                                is_active = FALSE
+                            WHERE node_id = :node_id AND trust_tier != 'ANCHOR'
+                        """),
+                        {"node_id": assigned_node.node_id},
+                    )
+                except Exception as slash_err:
+                    logger.warning(f"Could not persist node slash to compute_nodes: {slash_err}")
 
                 pass_rate = attestation.canary_accuracy if attestation else 0.0
                 att_sig = attestation.server_hmac_signature if attestation else None
@@ -498,6 +515,8 @@ class JobOrchestrationService:
                                 output_text=text_val,
                                 input_tokens=in_t,
                                 output_tokens=out_t,
+                                is_simulated=getattr(anchor_res, "is_simulated", False),
+                                execution_mode=getattr(anchor_res, "execution_mode", "LIVE"),
                             )
                         )
                     else:

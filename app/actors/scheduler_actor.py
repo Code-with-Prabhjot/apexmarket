@@ -87,7 +87,15 @@ class CapacityAwareScheduler:
         rows = result.fetchall()
         candidates: List[NodeCandidate] = []
 
+        from app.services.chaos_service import is_node_quarantined
         for row in rows:
+            # Filter out quarantined or slashed nodes
+            if is_node_quarantined(row.node_id):
+                continue
+            tier_val = getattr(row.trust_tier, "value", str(row.trust_tier))
+            if tier_val == "SLASHED":
+                continue
+
             node_dict = {
                 "node_id": row.node_id,
                 "trust_tier": row.trust_tier,
@@ -131,6 +139,22 @@ class CapacityAwareScheduler:
           - PROBATION_SPOT: Capped at <= 5% of total prompts.
           - Max concurrency limits per node.
         """
+        from app.services.chaos_service import is_node_quarantined
+        # Filter out quarantined or slashed nodes from candidate pool
+        valid_candidates = [
+            c for c in candidates
+            if not is_node_quarantined(c.node_id)
+            and getattr(c.trust_tier, "value", str(c.trust_tier)) != "SLASHED"
+        ]
+        if not valid_candidates:
+            # If no non-quarantined nodes remain, check if an anchor node exists
+            anchor_cand = next((c for c in candidates if c.trust_tier == NodeTrustTier.ANCHOR), None)
+            if anchor_cand:
+                valid_candidates = [anchor_cand]
+            else:
+                raise ValueError("No active, non-quarantined compute nodes available for scheduling.")
+        candidates = valid_candidates
+
         if not candidates:
             raise ValueError("No active compute nodes available for scheduling.")
 

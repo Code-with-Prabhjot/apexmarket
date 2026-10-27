@@ -82,9 +82,24 @@ async def seed_default_nodes_if_empty() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and graceful shutdown lifecycle."""
+    current_settings = get_settings()
+    if current_settings.APP_ENV == "production":
+        if current_settings.ADMIN_API_KEY == "apex-demo-2026":
+            raise RuntimeError("Production requires secure ADMIN_API_KEY")
+        if not current_settings.FRONTEND_ORIGIN or current_settings.FRONTEND_ORIGIN == "*":
+            raise RuntimeError("Production requires explicit, non-wildcard FRONTEND_ORIGIN")
+        # Restrict CORS origins strictly to FRONTEND_ORIGIN in production (rejecting wildcard ["*"])
+        for middleware in app.user_middleware:
+            if middleware.cls == CORSMiddleware:
+                middleware.kwargs["allow_origins"] = [current_settings.FRONTEND_ORIGIN]
+
     await seed_default_nodes_if_empty()
     yield
     await close_database_connections()
+    from app.actors.executor_actor import close_shared_client as close_executor_client
+    from app.services.paypal_client import close_shared_client as close_paypal_client
+    await close_executor_client()
+    await close_paypal_client()
 
 
 app = FastAPI(
@@ -94,10 +109,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Configuration
+# CORS Configuration: strictly bounded to FRONTEND_ORIGIN in production
+cors_origins = [settings.FRONTEND_ORIGIN] if settings.APP_ENV == "production" else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -31,6 +31,7 @@ class NodeTrustTier(str, Enum):
     ANCHOR = "ANCHOR"
     VERIFIED_PROVIDER = "VERIFIED_PROVIDER"
     PROBATION_SPOT = "PROBATION_SPOT"
+    SLASHED = "SLASHED"
 
 
 class JobStatus(str, Enum):
@@ -150,6 +151,8 @@ class PromptResultItem(BaseModel):
     output_text: str
     input_tokens: int = Field(..., ge=0)
     output_tokens: int = Field(..., ge=0)
+    is_simulated: bool = Field(default=False, description="True if generated via fallback mock simulation")
+    execution_mode: str = Field(default="LIVE", description="Execution mode tag: LIVE or SIMULATED_MOCK")
 
 
 class ShredAttestation(BaseModel):

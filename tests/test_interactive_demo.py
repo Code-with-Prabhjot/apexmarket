@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.config import get_settings
-from app.services.chaos_service import set_node_drift, is_node_drifted, reset_drift
+from app.services.chaos_service import set_node_drift, is_node_drifted, reset_drift, reset_quarantine, is_node_quarantined
 from app.services.progress_tracker import tracker
 from app.services.in_memory_store import global_in_memory_store, get_in_memory_session
 from app.schemas import (
@@ -28,10 +28,20 @@ from app.services.orchestration_service import JobOrchestrationService
 @pytest.fixture(autouse=True)
 def clean_state():
     reset_drift()
+    reset_quarantine()
     tracker.events.clear()
+    for n in global_in_memory_store.compute_nodes.values():
+        n["is_active"] = True
+        if n["node_id"] != "nebius-nemotron-anchor":
+            n["trust_tier"] = "PROBATION_SPOT"
     yield
     reset_drift()
+    reset_quarantine()
     tracker.events.clear()
+    for n in global_in_memory_store.compute_nodes.values():
+        n["is_active"] = True
+        if n["node_id"] != "nebius-nemotron-anchor":
+            n["trust_tier"] = "PROBATION_SPOT" 
 
 
 def test_demo_drift_toggle_endpoint():
@@ -116,6 +126,12 @@ async def test_batch_execution_with_drift_triggers_quarantine_and_anchor_failove
     # 4. Spot node received $0.00 payout for the failed shred
     spot_after = global_in_memory_store.compute_nodes["runpod-h100-spot-01"].get("withdrawable_micros", 0)
     assert spot_after == initial_spot
+
+    # 5. Persistent Quarantine / Slashing verification: node must be quarantined and excluded from candidates
+    assert is_node_quarantined("runpod-h100-spot-01") is True
+    candidates = await orchestrator.scheduler.get_candidate_nodes(db=session)
+    candidate_ids = [c.node_id for c in candidates]
+    assert "runpod-h100-spot-01" not in candidate_ids
 
 
 def test_settle_now_endpoint_sandbox():

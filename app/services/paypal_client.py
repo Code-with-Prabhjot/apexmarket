@@ -54,10 +54,30 @@ class PayPalError(Exception):
         )
 
 
+_shared_client: Optional[httpx.AsyncClient] = None
+
+
+def get_shared_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            timeout=20.0,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+        )
+    return _shared_client
+
+
+async def close_shared_client() -> None:
+    global _shared_client
+    if _shared_client is not None and not _shared_client.is_closed:
+        await _shared_client.aclose()
+        _shared_client = None
+
+
 class PayPalClient:
-    def __init__(self, settings: Settings, http: httpx.AsyncClient):
+    def __init__(self, settings: Settings, http: Optional[httpx.AsyncClient] = None):
         self.settings = settings
-        self.http = http
+        self.http = http or get_shared_client()
         self.base_url = settings.PAYPAL_BASE_URL.rstrip("/")
 
     @property

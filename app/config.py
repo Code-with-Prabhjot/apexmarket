@@ -4,7 +4,7 @@ Implements typed, production-grade settings via Pydantic Settings v2.
 """
 
 from functools import lru_cache
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     # Application Runtime
     APP_ENV: str = Field(default="development", description="Runtime environment: development, test, production")
+    FRONTEND_ORIGIN: str = Field(default="http://localhost:3000", description="Strictly authorized frontend origin for CORS (enforced in production)")
+    ALLOW_MOCK_FALLBACK: bool = Field(default=False, description="Allow in-process mock fallback when external endpoints fail. Defaults to True only when APP_ENV != 'production'.")
     LOG_LEVEL: str = Field(default="INFO", description="Logging verbosity level")
     HOST: str = Field(default="127.0.0.1", description="FastAPI host binding")
     PORT: int = Field(default=8000, description="FastAPI port binding")
@@ -122,6 +124,13 @@ class Settings(BaseSettings):
         default=0.05,  # 5% anchor sampling
         description="Percentage of real prompts re-executed against the trusted Nebius anchor",
     )
+
+
+    @model_validator(mode="after")
+    def _apply_env_defaults(self) -> "Settings":
+        if "ALLOW_MOCK_FALLBACK" not in self.model_fields_set:
+            self.ALLOW_MOCK_FALLBACK = (self.APP_ENV != "production")
+        return self
 
 
 @lru_cache()

@@ -9,13 +9,18 @@ Performs per-shred audit:
   6. Cryptographic server HMAC attestation signing
 """
 
+import concurrent.futures
 import hashlib
 import hmac
 import json
+import logging
+import math
 import random
 import re
 from typing import List, Dict, Any, Tuple, Optional
 import uuid
+
+logger = logging.getLogger("apexmarket.verification")
 
 from app.config import get_settings
 from app.schemas import ShredAttestation, PromptResultItem
@@ -34,22 +39,35 @@ SAFETY_PATTERNS = [
 class TokenizerBillingAuthority:
     """Computes exact byte-level token counts locally rather than trusting self-reported metadata."""
     _tokenizer = None
+    _init_attempted = False
+    _warned_offline = False
 
     @classmethod
     def get_tokenizer(cls):
-        if cls._tokenizer is None:
+        if cls._tokenizer is None and not cls._init_attempted:
+            cls._init_attempted = True
             try:
                 from tokenizers import Tokenizer
-                # Use standard BPE tokenizer or initialize pre-trained
-                cls._tokenizer = Tokenizer.from_pretrained("gpt2")
-            except Exception:
+                # Strict 3-second guard on network/model download
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(Tokenizer.from_pretrained, "gpt2")
+                    cls._tokenizer = future.result(timeout=3.0)
+            except Exception as e:
                 cls._tokenizer = None
+                if not cls._warned_offline:
+                    cls._warned_offline = True
+                    logger.warning("Tokenizer offline: using local deterministic billing estimator")
         return cls._tokenizer
 
     @classmethod
-    def count_tokens(cls, text_content: str) -> int:
+    def count_tokens(cls, text_content: Optional[str]) -> int:
+        """
+        Calculates token count. Never silently returns None or 0.
+        Uses exact 4.0 chars/token conservative boundary if tokenizer is offline.
+        """
         if not text_content:
-            return 0
+            return 1
+
         tokenizer = cls.get_tokenizer()
         if tokenizer is not None:
             try:
@@ -57,8 +75,15 @@ class TokenizerBillingAuthority:
                 return max(1, len(encoded.ids))
             except Exception:
                 pass
-        # Fallback conservative token estimation: 1 token ~ 4 characters
-        return max(1, int(len(text_content.encode("utf-8")) / 3.8))
+
+        if not cls._warned_offline:
+            cls._warned_offline = True
+            logger.warning("Tokenizer offline: using local deterministic billing estimator")
+
+        # Fallback conservative token estimation: 4.0 chars/token exact conservative boundary
+        # Guaranteed to return >= 1, never None or 0
+        raw_len = len(text_content.encode("utf-8", errors="replace")) if isinstance(text_content, str) else len(str(text_content))
+        return max(1, math.ceil(raw_len / 4.0))
 
 
 class CanaryProbeEngine:

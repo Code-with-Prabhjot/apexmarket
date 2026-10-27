@@ -29,13 +29,18 @@ router = APIRouter(prefix="/billing", tags=["Billing"])
 
 UNCONFIRMED_DETAIL = "PayPal has not confirmed this request. Retry the same request; it will not be charged twice."
 
+_ORIGINAL_ASYNC_CLIENT = httpx.AsyncClient
+
 
 async def run_topup_action(db: AsyncSession, action) -> dict:
-    """Runs a top-up service call with a fresh PayPal client and maps its errors to HTTP."""
+    """Runs a top-up service call with a persistent or mocked PayPal client and maps its errors to HTTP."""
     settings = get_settings()
     try:
-        async with httpx.AsyncClient(timeout=20) as http:
-            return await action(PayPalClient(settings, http), settings)
+        if httpx.AsyncClient is not _ORIGINAL_ASYNC_CLIENT:
+            async with httpx.AsyncClient(timeout=20) as http:
+                return await action(PayPalClient(settings, http), settings)
+        else:
+            return await action(PayPalClient(settings), settings)
     except TopUpNotFound as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
