@@ -4,7 +4,7 @@ Defines strictly validated data models for batch jobs, prompts, telemetry,
 attestation, nodes, ledger accounting, and settlement.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Set
 import uuid
@@ -80,8 +80,16 @@ class InferencePrompt(BaseModel):
     @field_validator("content")
     @classmethod
     def validate_content_non_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("Prompt content cannot consist solely of whitespace.")
+        if not v or not v.strip():
+            raise ValueError("Prompt content cannot be empty or consist solely of whitespace.")
+        import unicodedata
+        for char in v:
+            if char not in ("\t", "\n", "\r"):
+                cat = unicodedata.category(char)
+                if cat == "Cc" or cat == "Cs":
+                    raise ValueError(
+                        f"Prompt content contains forbidden Unicode control character U+{ord(char):04X}."
+                    )
         return v
 
 
@@ -208,7 +216,7 @@ class NodeTelemetrySnapshot(BaseModel):
     tokens_per_sec: float = Field(..., ge=0.0)
     error_rate_50req: float = Field(..., ge=0.0, le=1.0)
     is_active: bool = True
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class NodeRegistrationRequest(BaseModel):

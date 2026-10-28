@@ -23,6 +23,35 @@ LEDGER_TABLES = (
     "paypal_topups, payout_items, payout_batches, ledger_entries, job_shreds, batch_jobs, compute_nodes, clients"
 )
 
+# Strictly enforce Nebius Credit Protection Guard across all test runs
+os.environ["EXECUTE_LIVE_NEBIUS"] = "false"
+
+
+@pytest.fixture(autouse=True, scope="session")
+def guard_nebius_credits_in_tests():
+    """Strictly guarantees pytest suites NEVER make outbound calls to Nebius Token Factory."""
+    os.environ["EXECUTE_LIVE_NEBIUS"] = "false"
+    import httpx
+    original_send = httpx.AsyncClient.send
+
+    async def patched_send(self, request, *args, **kwargs):
+        host = str(request.url.host)
+        if "nebius" in host or "tokenfactory" in host:
+            raise RuntimeError(
+                f"CREDIT_PROTECTION_VIOLATION: Outbound call to Nebius ({request.url}) "
+                f"attempted during pytest execution! Live network calls to Nebius are strictly blocked."
+            )
+        return await original_send(self, request, *args, **kwargs)
+
+    httpx.AsyncClient.send = patched_send
+    yield
+    httpx.AsyncClient.send = original_send
+
+SCHEMA_PATH = Path(__file__).resolve().parent.parent / "sql" / "schema.sql"
+LEDGER_TABLES = (
+    "paypal_topups, payout_items, payout_batches, ledger_entries, job_shreds, batch_jobs, compute_nodes, clients"
+)
+
 _schema_applied = False
 
 

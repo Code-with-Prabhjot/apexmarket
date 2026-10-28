@@ -211,6 +211,24 @@ class ShredExecutor:
                 f"({self.fail_streak.get(node.node_id, 0)} consecutive failures)"
             )
 
+        # Credit Protection Guard: Block live outbound calls to Nebius Token Factory
+        # unless BOTH NEBIUS_API_KEY is present AND EXECUTE_LIVE_NEBIUS=True
+        is_nebius_anchor = (
+            node.endpoint_url.startswith("https://api.tokenfactory.nebius.com")
+            or "nebius" in node.node_id.lower()
+        )
+        settings = get_settings()
+        if is_nebius_anchor and not (settings.NEBIUS_API_KEY and settings.EXECUTE_LIVE_NEBIUS):
+            if settings.ALLOW_MOCK_FALLBACK and settings.APP_ENV != "production":
+                text, in_t, out_t, ttft = await self._call_in_process_mock(node, prompt, max_tokens)
+                self.fail_streak[node.node_id] = 0
+                self.tracker.record(node.node_id, ttft, True)
+                return NodeCallResult(text, in_t, out_t, ttft, is_simulated=True, execution_mode="SIMULATED_MOCK")
+            raise UpstreamProviderError(
+                f"Node {node.node_id} ({node.endpoint_url}) call blocked: "
+                f"EXECUTE_LIVE_NEBIUS is false or omitted. $25 credit voucher safety guard active."
+            )
+
         sem = self.sems.setdefault(node.node_id, asyncio.Semaphore(max(1, node.max_concurrent)))
         t_out = timeout_s if timeout_s is not None else self.timeout_s
 

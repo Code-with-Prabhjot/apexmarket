@@ -76,6 +76,16 @@ def test_prompt_content_length_boundaries():
     with pytest.raises(ValidationError):
         InferencePrompt(prompt_index=4, content="   \n\t  ")
 
+    # Invalid: Unicode control characters
+    with pytest.raises(ValidationError):
+        InferencePrompt(prompt_index=5, content="Prompt with null\x00byte")
+
+    with pytest.raises(ValidationError):
+        InferencePrompt(prompt_index=6, content="Prompt with bell\x07char")
+
+    with pytest.raises(ValidationError):
+        InferencePrompt(prompt_index=7, content="Prompt with backspace\x08char")
+
 
 def test_reject_duplicate_prompt_indices():
     """Asserts that duplicate prompt_index values are rejected to prevent state corruption."""

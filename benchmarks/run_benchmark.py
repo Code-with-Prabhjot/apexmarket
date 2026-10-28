@@ -10,17 +10,20 @@ Harness Fallback Switch:
 Outputs structured empirical metrics to benchmarks/empirical_results.csv.
 """
 
+import argparse
 import asyncio
 import csv
 import os
 import re
 import statistics
+import sys
 import time
 from typing import List, Dict, Any, Optional
 import httpx
 
 NEBIUS_BASE_URL = os.getenv("NEBIUS_BASE_URL", "https://api.tokenfactory.nebius.com/v1")
 NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY", "")
+EXECUTE_LIVE_NEBIUS = os.getenv("EXECUTE_LIVE_NEBIUS", "").lower() in ("true", "1", "yes")
 SECONDARY_BASE_URL = os.getenv("SECONDARY_BASE_URL", "https://openrouter.ai/api/v1")
 SECONDARY_API_KEY = os.getenv("SECONDARY_API_KEY", "")
 BENCHMARK_MODEL_ID = os.getenv("BENCHMARK_MODEL_ID", "nvidia/nemotron-3-nano-30b-a3b")
@@ -290,22 +293,62 @@ def get_deterministic_mock_results() -> List[Dict[str, Any]]:
     ]
 
 
-async def main():
+async def main(argv: Optional[List[str]] = None):
+    parser = argparse.ArgumentParser(description="ApexMarket Benchmark Harness")
+    parser.add_argument(
+        "--full-benchmark",
+        action="store_true",
+        help="Override spend bounding guard to run full 50-prompt benchmark instead of the 15-prompt cap (<$0.02)",
+    )
+    args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+
     os.makedirs("benchmarks", exist_ok=True)
     csv_path = "benchmarks/empirical_results.csv"
 
-    # Step 1: Probe Nebius API Key credentials
+    # Step 1: Explicit Execution Guard for $25 voucher safety
+    # Live calls to Nebius Token Factory are BLOCKED unless BOTH NEBIUS_API_KEY is present
+    # AND EXECUTE_LIVE_NEBIUS=true is explicitly set in the environment.
+    can_attempt_live = bool(NEBIUS_API_KEY and NEBIUS_API_KEY.strip() and EXECUTE_LIVE_NEBIUS)
+
+    if not can_attempt_live:
+        if not NEBIUS_API_KEY or not NEBIUS_API_KEY.strip():
+            print("[!] NEBIUS_API_KEY is missing or empty in environment.")
+        elif not EXECUTE_LIVE_NEBIUS:
+            print("[!] Credit Protection Guard: EXECUTE_LIVE_NEBIUS is false or omitted.")
+            print("    Live outbound calls to Nebius Token Factory are BLOCKED to safeguard the $25 voucher.")
+        print("[!] Executing deterministic test harness with visible [DRY-RUN / MOCK] provenance flag.")
+        rows = get_deterministic_mock_results()
+
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            f.write("# [DRY-RUN / MOCK] Deterministic test harness - uncredited Nebius simulation\n")
+            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+        print(f"[+] Successfully saved [DRY-RUN / MOCK] empirical benchmark results ({len(rows)} rows) to {csv_path}")
+        return
+
+    # Step 2: Probe Nebius API Key credentials
     is_live_valid = await check_nebius_credentials(NEBIUS_BASE_URL, NEBIUS_API_KEY)
 
     if is_live_valid:
         print("[+] Executing LIVE empirical benchmark against Nebius Token Factory...")
         await discover_nebius_models()
 
-        sample_prompts = [
+        all_prompts = [
             f"Extract financial metrics and risk indicators for item #{i}: "
             "High-frequency datacenter infrastructure observed a 12% drop in idle capacity during peak cycles."
             for i in range(50)
         ]
+
+        # Spend Bounding Guard: cap live benchmark to max 15 prompts (<$0.02) unless --full-benchmark is passed
+        if args.full_benchmark:
+            sample_prompts = all_prompts
+            print(f"[!] --full-benchmark override passed: Running all {len(sample_prompts)} prompts.")
+        else:
+            sample_prompts = all_prompts[:15]
+            print(f"[!] Spend Bounding Guard ACTIVE: Capping live benchmark to {len(sample_prompts)} prompts (<$0.02 voucher spend).")
+            print("    Pass --full-benchmark to execute all 50 prompts.")
 
         rows = []
         for run_idx in range(1, 4):
@@ -347,8 +390,8 @@ async def main():
         print(f"[+] Successfully saved LIVE empirical benchmark results ({len(rows)} rows) to {csv_path}")
 
     else:
-        # Step 2: Fallback to Deterministic Test Harness
-        print("[!] NEBIUS_API_KEY is missing, uncredited, or rejected by Nebius.")
+        # Fallback to Deterministic Test Harness if probe fails
+        print("[!] Nebius authentication probe was rejected by Nebius.")
         print("[!] Executing deterministic test harness with visible [DRY-RUN / MOCK] provenance flag.")
         rows = get_deterministic_mock_results()
 

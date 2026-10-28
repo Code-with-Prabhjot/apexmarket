@@ -29,6 +29,10 @@ class Settings(BaseSettings):
 
     # Nebius Token Factory (Reference Anchor & Verification Judge)
     NEBIUS_API_KEY: str = Field(default="", description="Nebius Token Factory API key")
+    EXECUTE_LIVE_NEBIUS: bool = Field(
+        default=False,
+        description="Explicit credit protection guard: MUST be true to allow live outbound API calls to Nebius Token Factory. Protects $25 credit voucher from being burned during local dev or automated testing.",
+    )
     NEBIUS_BASE_URL: str = Field(
         default="https://api.tokenfactory.nebius.com/v1",
         description="Nebius Token Factory OpenAI-compatible base URL",
