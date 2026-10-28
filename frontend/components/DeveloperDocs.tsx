@@ -240,6 +240,22 @@ main().catch(console.error);
           </p>
         </div>
       </div>
+
+      {/* Technical Whitepaper & Verification Quicklinks */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 p-3.5 rounded-lg bg-[#0c121e] border border-[#202c3c] text-xs">
+        <div className="flex items-center gap-2 text-slate-300">
+          <BookOpen size={15} className="text-[#70e4bf]" />
+          <span>Need complete mathematical specifications and economic game theory proofs?</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <a href="/architecture" className="text-[#70e4bf] hover:underline flex items-center gap-1 font-semibold">
+            System Architecture Whitepaper <ExternalLink size={12} />
+          </a>
+          <a href="/verify" className="text-slate-300 hover:text-white flex items-center gap-1">
+            Attestation Verifier <ExternalLink size={12} />
+          </a>
+        </div>
+      </div>
     </section>
   );
 }

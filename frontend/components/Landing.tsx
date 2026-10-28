@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import Link from "next/link";
+import PipelineVisualizer from "./PipelineVisualizer";
+import EconomicCalculator from "./EconomicCalculator";
 import {
   ArrowRight,
   ChevronRight,
@@ -286,8 +288,9 @@ export default function Landing() {
         <nav>
           <a href="#highlights">Highlights</a>
           <a href="#arbitrage">Cost Arbitrage</a>
-          <a href="#how">How it works</a>
-          <a href="#verify">Verification</a>
+          <a href="#pipeline">Pipeline Simulator</a>
+          <Link href="/verify">Verify Audit Bundle</Link>
+          <Link href="/architecture">Architecture</Link>
           <Link className="lp-btn" href="/dashboard" style={{ padding: "9px 18px" }}>
             Launch Mission Control
           </Link>
@@ -297,7 +300,10 @@ export default function Landing() {
       <section className="lp-hero">
         <Network />
         <div>
-          <div className="lp-pill"><i />Nebius · NVIDIA Nemotron-3-Nano · PayPal Escrow</div>
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold tracking-wider uppercase bg-[#70e4bf14] border border-[#70e4bf55] text-[#70e4bf] shadow-[0_0_20px_rgba(112,228,191,0.25)] mb-5 backdrop-blur-sm">
+            <span className="w-2 h-2 rounded-full bg-[#70e4bf] shadow-[0_0_8px_#70e4bf] animate-ping" />
+            POWERED BY NEBIUS TOKEN FACTORY · NVIDIA NEMOTRON-3-NANO ANCHOR
+          </div>
           <h1>Inference that is <Typed words={["verified.", "cheaper.", "paid on proof."]} /></h1>
           <p className="lp-sub">
             ApexMarket splits batch AI workloads across spot providers, verifies every shred against a trusted Nebius Nemotron reference anchor, and releases payment only when proof succeeds.
@@ -346,11 +352,25 @@ export default function Landing() {
           <div className="lp-eyebrow">Empirical Cost Arbitrage</div>
           <h2>32.18% Verified Cost Savings Without Quality Loss</h2>
           <p className="lp-lead">
-            Measured across 3 empirical benchmark runs on identical NVIDIA Nemotron open-weight models. High throughput and 52ms TTFT with zero vendor lock-in.
+            Measured across empirical benchmark runs on identical NVIDIA Nemotron open-weight models. High throughput and 52ms TTFT with zero vendor lock-in.
           </p>
         </Reveal>
         <Reveal d={0.1}>
-          <CostCalculator />
+          <EconomicCalculator />
+        </Reveal>
+      </section>
+
+      {/* Interactive 5-Tier Protected Pipeline Simulator */}
+      <section className="lp-sec" id="pipeline" style={{ paddingTop: 0 }}>
+        <Reveal>
+          <div className="lp-eyebrow">Enterprise Batch Execution</div>
+          <h2>Interactive 5-Tier Protected Pipeline Simulator</h2>
+          <p className="lp-lead">
+            Step through how ApexMarket protects enterprise batch workloads: capacity-aware greedy routing, active 4% HMAC canary challenges, and INT4 drift failover to the Nebius reference anchor.
+          </p>
+        </Reveal>
+        <Reveal d={0.1}>
+          <PipelineVisualizer autoPlay={false} />
         </Reveal>
       </section>
 
@@ -392,7 +412,20 @@ export default function Landing() {
           </Link>
         </Reveal>
       </section>
-      <p className="lp-foot">ApexMarket · Verified inference. Measured savings. Proof before payment.</p>
+      <footer className="lp-foot flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-8 border-t border-[#202c3c] mt-16 text-xs text-slate-400">
+        <div>ApexMarket · Verified inference. Measured savings. Proof before payment.</div>
+        <div className="flex items-center gap-5 font-semibold">
+          <Link href="/verify" className="hover:text-white transition-colors">
+            Verify Audit Bundle
+          </Link>
+          <Link href="/architecture" className="hover:text-white transition-colors">
+            Architecture Whitepaper
+          </Link>
+          <Link href="/dashboard" className="text-[#70e4bf] hover:underline">
+            Launch Mission Control →
+          </Link>
+        </div>
+      </footer>
     </main>
   );
 }

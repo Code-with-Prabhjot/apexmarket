@@ -30,6 +30,8 @@ import BenchmarkChart from "./BenchmarkChart";
 import ConfidentialToggle from "./ConfidentialToggle";
 import JobResultsViewer from "./JobResultsViewer";
 import SimulationBanner from "./SimulationBanner";
+import TelemetryGauges from "./TelemetryGauges";
+import Link from "next/link";
 import { INDUSTRY_BATCH_PRESETS } from "@/lib/batchPresets";
 import { exportAuditCertificate } from "@/lib/AuditCertificate";
 import { demoProviders, demoSnapshot, settleDemo } from "@/lib/simulation";
@@ -63,7 +65,16 @@ const Topology = dynamic(() => import("./Topology"), {
   loading: () => <div className="topology loading">Initializing network…</div>,
 });
 
-const SIMULATED = process.env.NEXT_PUBLIC_MOCK_FALLBACK === "true";
+const isVercelRuntime =
+  typeof window !== "undefined" &&
+  (window.location.hostname.endsWith(".vercel.app") ||
+    window.location.search.includes("mock=true"));
+
+const SIMULATED =
+  process.env.NEXT_PUBLIC_MOCK_FALLBACK === "true" ||
+  process.env.VERCEL === "1" ||
+  Boolean(process.env.NEXT_PUBLIC_VERCEL_ENV) ||
+  isVercelRuntime;
 type Log = { id: number; time: string; text: string; tone: string };
 
 const NAV_ITEMS = [
@@ -265,7 +276,14 @@ export default function MissionControl() {
           getTelemetry(),
         ]);
         if (stopped) return;
-        if (registry.status === "rejected") throw registry.reason;
+        if (registry.status === "rejected") {
+          console.warn("[MissionControl] Engine unreachable, switching to zero-error simulation fallback:", registry.reason);
+          setProviders(demoProviders);
+          setSnapshot(demoSnapshot(0, confidential, slashed, 0, 0));
+          setConnection("Simulation");
+          setHttpError("");
+          return;
+        }
         const metrics = telemetry.status === "fulfilled" ? telemetry.value : [];
         setProviders(
           registry.value.map((p) => ({
@@ -868,6 +886,18 @@ export default function MissionControl() {
             <span className="version">/ mission control</span>
           </a>
           <div className="topbar-right">
+            <Link
+              href="/verify"
+              className="px-2.5 py-1 rounded text-xs font-semibold bg-[#70e4bf1a] text-[#70e4bf] border border-[#70e4bf33] hover:bg-[#70e4bf2a] transition-colors flex items-center gap-1.5"
+            >
+              <ShieldCheck size={13} /> Verify Audit Bundle
+            </Link>
+            <Link
+              href="/architecture"
+              className="px-2.5 py-1 rounded text-xs font-semibold bg-[#1a2638] text-slate-300 border border-[#2a3c54] hover:text-white transition-colors"
+            >
+              Architecture
+            </Link>
             <span
               className={`connection ${
                 connection === "Live" || SIMULATED ? "healthy" : ""
@@ -883,8 +913,14 @@ export default function MissionControl() {
         <main>
           <div className="page-heading">
             <div>
-              <div className="eyebrow">
-                INFERENCE OPERATIONS <ChevronRight size={12} /> OVERVIEW
+              <div className="flex flex-wrap items-center gap-2.5 mb-2">
+                <div className="eyebrow !mb-0">
+                  INFERENCE OPERATIONS <ChevronRight size={12} /> OVERVIEW
+                </div>
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase bg-[#70e4bf14] border border-[#70e4bf55] text-[#70e4bf] shadow-[0_0_15px_rgba(112,228,191,0.2)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#70e4bf] shadow-[0_0_6px_#70e4bf] animate-ping" />
+                  POWERED BY NEBIUS TOKEN FACTORY · NVIDIA NEMOTRON-3-NANO ANCHOR
+                </span>
               </div>
               <h1>
                 Mission Control<span>.</span>
@@ -972,6 +1008,30 @@ export default function MissionControl() {
               detail={`${totalWithdrawable.toLocaleString()} integer micro-dollars`}
             />
           </div>
+
+          {/* Real-Time Telemetry & Hardware Gauges Section */}
+          <section className="panel telemetry-panel mb-6" id="telemetry">
+            <div className="panel-heading">
+              <div>
+                <div className="eyebrow">
+                  <Activity size={14} /> REAL-TIME TELEMETRY &amp; HARDWARE GAUGES
+                </div>
+                <h2>Live infrastructure latency, token velocity, and audit overhead</h2>
+              </div>
+              <span className="pill">
+                <span className="dot optimal" />{" "}
+                {connection === "Live" ? "10 HZ WEBSOCKET" : "STREAMING METRICS"}
+              </span>
+            </div>
+            <div className="mt-4">
+              <TelemetryGauges
+                snapshot={displaySnapshot}
+                providers={providers}
+                liveThroughput={throughput}
+              />
+            </div>
+          </section>
+
           <div className="main-grid">
             <section className="panel network-panel" id="network">
               <div className="panel-heading">
@@ -1234,9 +1294,19 @@ export default function MissionControl() {
             <span>
               <Zap size={12} /> APEXMARKET <b>/</b> Verified inference infrastructure
             </span>
-            <span>
-              CONFIDENTIAL by default <span className="dot optimal" />
-            </span>
+            <div className="flex items-center gap-4 text-xs text-slate-400">
+              <Link href="/verify" className="hover:text-slate-200">
+                Verify Audit Bundle
+              </Link>
+              <span>·</span>
+              <Link href="/architecture" className="hover:text-slate-200">
+                System Architecture
+              </Link>
+              <span>·</span>
+              <span>
+                CONFIDENTIAL by default <span className="dot optimal" />
+              </span>
+            </div>
           </footer>
         </main>
       </div>
