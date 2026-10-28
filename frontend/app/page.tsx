@@ -1,2 +1,2 @@
-import MissionControl from "@/components/MissionControl";
-export default function Page() { return <MissionControl />; }
+   import Landing from "@/components/Landing";
+   export default function Page() { return <Landing />; }
