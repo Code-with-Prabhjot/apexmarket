@@ -17,6 +17,7 @@ export type Job = {
   job_id: string; status: string; sensitivity: string; total_prompts: number;
   actual_settled_cost_micros: number; platform_fee_micros: number;
   reserved_escrow_micros: number; total_makespan_ms?: number;
+  baseline_batch_api_cost_micros?: number;
 };
 export type BenchmarkRow = {
   run: string; route: string; cost: number; makespan: number; throughput: number; prompts: number;

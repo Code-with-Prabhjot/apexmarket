@@ -8,6 +8,8 @@ export type Attestation = {
   anchor_nll_score: number | null;
   nemotron_judge_score: number | null;
   server_hmac_attestation: string | null;
+  measured_input_tokens?: number | null;
+  measured_output_tokens?: number | null;
 };
 
 export type PromptResultItem = {

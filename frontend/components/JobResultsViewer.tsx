@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { ArrowRight, Download, Layers3, LoaderCircle } from "lucide-react";
+import { ArrowRight, Download, Layers3, LoaderCircle, ShieldCheck, Key } from "lucide-react";
 import { usd, type Job } from "@/lib/types";
 
 interface JobResultsViewerProps {
@@ -10,6 +10,8 @@ interface JobResultsViewerProps {
   busy: string;
   onOpenModal: () => void;
   onDownload: () => void;
+  onExportAudit?: () => void;
+  onInspectProof?: () => void;
 }
 
 export default function JobResultsViewer({
@@ -19,6 +21,8 @@ export default function JobResultsViewer({
   busy,
   onOpenModal,
   onDownload,
+  onExportAudit,
+  onInspectProof,
 }: JobResultsViewerProps) {
   return (
     <section className="panel batch-panel" id="batch">
@@ -55,18 +59,45 @@ export default function JobResultsViewer({
             {usd(job.actual_settled_cost_micros)}
             <small className="block text-xs text-slate-400 mt-0.5">verified cost</small>
           </div>
-          <button
-            className="secondary text-xs font-medium"
-            disabled={running || !!busy}
-            onClick={onDownload}
-          >
-            {busy === "results" ? (
-              <LoaderCircle size={14} className="spin" />
-            ) : (
-              <Download size={14} />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              className="secondary text-xs font-medium"
+              disabled={running || !!busy}
+              onClick={onDownload}
+              title="Download raw reassembled prompt results JSON"
+            >
+              {busy === "results" ? (
+                <LoaderCircle size={14} className="spin" />
+              ) : (
+                <Download size={14} />
+              )}
+              {" "}Results
+            </button>
+
+            {onExportAudit && (
+              <button
+                className="secondary text-xs font-medium border-[#70e4bf55] text-[#70e4bf] hover:bg-[#70e4bf15]"
+                disabled={running || !!busy}
+                onClick={onExportAudit}
+                title="Export signed cryptographic audit certificate"
+              >
+                <ShieldCheck size={14} />
+                {" "}Attestation Bundle
+              </button>
             )}
-            {" "}Results
-          </button>
+
+            {onInspectProof && (
+              <button
+                className="secondary text-xs font-medium text-amber-300 border-amber-500/40 hover:bg-amber-500/10"
+                disabled={running}
+                onClick={onInspectProof}
+                title="Inspect 5-tier cryptographic proof breakdown"
+              >
+                <Key size={13} />
+                {" "}Inspect Proof
+              </button>
+            )}
+          </div>
         </>
       ) : (
         <button className="text-button text-xs font-medium" onClick={onOpenModal}>

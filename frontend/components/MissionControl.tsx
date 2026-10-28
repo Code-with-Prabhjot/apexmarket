@@ -5,8 +5,10 @@ import {
   Activity,
   ArrowDownRight,
   ArrowRight,
+  Check,
   ChevronRight,
   CircleDollarSign,
+  Code2,
   Command,
   Cpu,
   Download,
@@ -17,14 +19,19 @@ import {
   Radio,
   RotateCcw,
   ShieldCheck,
+  Sparkles,
   Terminal,
   Wallet,
   Zap,
 } from "lucide-react";
+import AttestationDrawer from "./AttestationDrawer";
+import DeveloperDocs from "./DeveloperDocs";
 import BenchmarkChart from "./BenchmarkChart";
 import ConfidentialToggle from "./ConfidentialToggle";
 import JobResultsViewer from "./JobResultsViewer";
 import SimulationBanner from "./SimulationBanner";
+import { INDUSTRY_BATCH_PRESETS } from "@/lib/batchPresets";
+import { exportAuditCertificate } from "@/lib/AuditCertificate";
 import { demoProviders, demoSnapshot, settleDemo } from "@/lib/simulation";
 import {
   nodeState,
@@ -47,6 +54,7 @@ import {
   setDemoDrift,
   settleNow,
   type Attestation,
+  type PromptResultItem,
 } from "@/lib/api";
 import { summarize } from "@/lib/benchmarks";
 
@@ -65,6 +73,7 @@ const NAV_ITEMS = [
   { id: "telemetry", label: "Live Telemetry", icon: Activity, href: "#telemetry" },
   { id: "settlement", label: "Settlement Ledger & PayPal", icon: Wallet, href: "#settlement" },
   { id: "verification", label: "Dev Mode & Chaos Injection", icon: FlaskConical, href: "#verification" },
+  { id: "docs", label: "Developer API & SDK Hub", icon: Code2, href: "#docs" },
 ];
 
 const QUICK_TEMPLATES = [
@@ -102,6 +111,9 @@ export default function MissionControl() {
   const [modal, setModal] = useState(false);
   const [modalView, setModalView] = useState<"config" | "progress" | "results">("config");
   const [jobResults, setJobResults] = useState<any[] | null>(null);
+  const [selectedPrompt, setSelectedPrompt] = useState<PromptResultItem | null>(null);
+  const [isAttestationDrawerOpen, setIsAttestationDrawerOpen] = useState(false);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [lastBatch, setLastBatch] = useState<{ batch_id: string; status: string } | null>(null);
   const [retry, setRetry] = useState(0);
@@ -157,6 +169,7 @@ export default function MissionControl() {
       "telemetry",
       "settlement",
       "verification",
+      "docs",
     ];
     const observer = new IntersectionObserver(
       (entries) => {
@@ -712,8 +725,16 @@ export default function MissionControl() {
         ? Array.from({ length: job.total_prompts }, (_, i) => ({
             prompt_index: i,
             status: "SIMULATED",
+            executing_node_id:
+              job.sensitivity === "CONFIDENTIAL"
+                ? "nebius-h100-anchor"
+                : i % 2 === 0
+                ? "nebius-h100-anchor"
+                : "spot-provider-alpha",
             output_text:
               "Verified inference audits each batch before releasing node payment.",
+            input_tokens: 32,
+            output_tokens: 64,
           }))
         : await getJobResults(job.job_id);
       const url = URL.createObjectURL(
@@ -732,6 +753,20 @@ export default function MissionControl() {
     } finally {
       setBusy("");
     }
+  }
+
+  function handleExportAudit() {
+    if (!job) return;
+    exportAuditCertificate(
+      job,
+      attestations,
+      (jobResults as PromptResultItem[]) || [],
+      slashed ? ["runpod-h100-spot-01"] : []
+    );
+    addLog(
+      `Cryptographic attestation bundle exported for batch ${job.job_id.slice(0, 8)}.`,
+      "success"
+    );
   }
 
   const failedEvidence = attestations.some(
@@ -1082,6 +1117,11 @@ export default function MissionControl() {
             busy={busy}
             onOpenModal={() => setModal(true)}
             onDownload={downloadResults}
+            onExportAudit={handleExportAudit}
+            onInspectProof={() => {
+              setSelectedPrompt(jobResults?.[0] || null);
+              setIsAttestationDrawerOpen(true);
+            }}
           />
           <div className="bottom-grid">
             <BenchmarkChart benchmark={benchmark} />
@@ -1187,6 +1227,9 @@ export default function MissionControl() {
               ))}
             </div>
           </section>
+          <div className="mt-6 mb-2">
+            <DeveloperDocs />
+          </div>
           <footer>
             <span>
               <Zap size={12} /> APEXMARKET <b>/</b> Verified inference infrastructure
@@ -1328,6 +1371,16 @@ export default function MissionControl() {
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
                             {item.status}
                           </span>
+                          <button
+                            type="button"
+                            className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 transition-colors"
+                            onClick={() => {
+                              setSelectedPrompt(item);
+                              setIsAttestationDrawerOpen(true);
+                            }}
+                          >
+                            Inspect Proof
+                          </button>
                         </div>
                       </div>
                       <p className="text-slate-200 text-xs leading-relaxed font-sans">{item.output_text}</p>
@@ -1344,6 +1397,12 @@ export default function MissionControl() {
                     {busy === "results" ? <LoaderCircle size={14} className="spin" /> : <Download size={14} />} Download JSON
                   </button>
                   <button
+                    className="secondary flex-1 justify-center py-2.5 text-xs font-medium border-[#70e4bf55] text-[#70e4bf] hover:bg-[#70e4bf15]"
+                    onClick={handleExportAudit}
+                  >
+                    <ShieldCheck size={14} /> Export Attestation Bundle
+                  </button>
+                  <button
                     className="primary flex-1 justify-center py-2.5 text-xs font-medium"
                     onClick={() => {
                       setModalView("config");
@@ -1358,6 +1417,48 @@ export default function MissionControl() {
 
             {modalView === "config" && (
               <>
+                {/* Industry Batch Presets */}
+                <div className="industry-presets my-2.5">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                      <Sparkles size={13} className="text-[#70e4bf]" /> Quick Industry Batches (1-Click)
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">Enterprise Presets</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    {INDUSTRY_BATCH_PRESETS.map((preset) => {
+                      const isSelected = selectedPresetId === preset.id;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          className={`p-2.5 rounded-lg text-left border transition-all ${
+                            isSelected
+                              ? "bg-[#70e4bf15] border-[#70e4bf] text-slate-100 shadow-sm shadow-[#70e4bf10]"
+                              : "bg-slate-900/80 border-slate-800 hover:border-slate-700 text-slate-300"
+                          }`}
+                          onClick={() => {
+                            setSelectedPresetId(preset.id);
+                            setPrompt(preset.prompts.join("\n"));
+                            setPromptCount(preset.promptCount);
+                            setBudget(preset.budget);
+                            setConfidential(preset.sensitivity === "CONFIDENTIAL");
+                          }}
+                        >
+                          <div className="flex items-center justify-between text-xs font-medium mb-1">
+                            <span className="text-slate-100 truncate font-semibold">{preset.title}</span>
+                            {isSelected && <Check size={13} className="text-[#70e4bf] shrink-0" />}
+                          </div>
+                          <div className="text-[10px] font-mono text-[#70e4bf] font-medium">{preset.tag}</div>
+                          <div className="text-[11px] text-slate-400 mt-1 line-clamp-2 leading-tight">
+                            {preset.description}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="quick-templates my-2">
                   <div className="text-xs text-slate-300 font-medium mb-1.5">Quick Templates:</div>
                   <div className="flex flex-wrap gap-1.5">
@@ -1451,6 +1552,13 @@ export default function MissionControl() {
           </section>
         </div>
       )}
+      <AttestationDrawer
+        isOpen={isAttestationDrawerOpen}
+        onClose={() => setIsAttestationDrawerOpen(false)}
+        attestation={attestations[0] || null}
+        promptResult={selectedPrompt}
+        jobId={job?.job_id}
+      />
     </div>
   );
 }
