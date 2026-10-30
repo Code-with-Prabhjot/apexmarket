@@ -1,10 +1,14 @@
 # ApexMarket: Verified Multi-Provider Batch Inference Arbitrage Engine with Double-Entry Settlement — Powered by Nebius Token Factory & NVIDIA Nemotron
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-apexmarket--roan.vercel.app-00E599?style=for-the-badge&logo=vercel)](https://apexmarket-roan.vercel.app)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Nebius Token Factory](https://img.shields.io/badge/Powered%20By-Nebius%20Token%20Factory-00E599.svg)](https://nebius.ai)
 [![NVIDIA Nemotron](https://img.shields.io/badge/Reference%20Anchor-NVIDIA%20Nemotron--3--Nano-76B900.svg)](https://huggingface.co/nvidia)
 [![Hackathon Track](https://img.shields.io/badge/Devpost%20Track-Coding%20%26%20Agentic%20Engineering-orange.svg)](https://devpost.com)
 [![Tests](https://img.shields.io/badge/Test%20Suite-100%25%20Passing-emerald.svg)](tests/)
+
+> 🚀 **Live Interactive Demo:** [https://apexmarket-roan.vercel.app](https://apexmarket-roan.vercel.app)  
+> 🏆 **Devpost Submission Track:** Coding & Agentic Engineering (Nebius x NVIDIA Global AI Hackathon)
 
 ---
 
@@ -115,7 +119,7 @@ Evaluated across repeated benchmark runs on identical NVIDIA Nemotron workloads 
 #### Terminal 1: Backend Engine (FastAPI)
 ```bash
 # 1. Clone repository
-git clone https://github.com/apexmarket/apexmarket.git
+git clone https://github.com/Code-with-Prabhjot/apexmarket.git
 cd apexmarket
 
 # 2. Activate virtual environment & install dependencies
@@ -142,7 +146,7 @@ npm run dev
 
 The frontend includes a self-contained zero-error mock simulation mode for hackathon judges evaluating the interface without running a local backend:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fapexmarket%2Fapexmarket&root-directory=frontend)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FCode-with-Prabhjot%2Fapexmarket&root-directory=frontend)
 
 1. Deploy the `frontend/` directory to Vercel.
 2. The included [`frontend/vercel.json`](frontend/vercel.json) automatically activates `NEXT_PUBLIC_MOCK_FALLBACK=true`.
