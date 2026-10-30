@@ -1,17 +1,19 @@
 "use client";
 import React from "react";
-import { ArrowRight, Download, Layers3, LoaderCircle, ShieldCheck, Key } from "lucide-react";
-import { usd, type Job } from "@/lib/types";
+import { ArrowRight, Download, Layers3, LoaderCircle, ShieldCheck, Key, Cpu } from "lucide-react";
+import { usd, getProviderBadgeInfo, type Job } from "@/lib/types";
+import type { PromptResultItem } from "@/lib/api";
 
 interface JobResultsViewerProps {
   job: Job | null;
   done: number;
   running: boolean;
   busy: string;
+  results?: PromptResultItem[] | null;
   onOpenModal: () => void;
   onDownload: () => void;
   onExportAudit?: () => void;
-  onInspectProof?: () => void;
+  onInspectProof?: (prompt?: PromptResultItem) => void;
 }
 
 export default function JobResultsViewer({
@@ -19,6 +21,7 @@ export default function JobResultsViewer({
   done,
   running,
   busy,
+  results,
   onOpenModal,
   onDownload,
   onExportAudit,
@@ -90,7 +93,7 @@ export default function JobResultsViewer({
               <button
                 className="secondary text-xs font-medium text-amber-300 border-amber-500/40 hover:bg-amber-500/10"
                 disabled={running}
-                onClick={onInspectProof}
+                onClick={() => onInspectProof()}
                 title="Inspect 5-tier cryptographic proof breakdown"
               >
                 <Key size={13} />
@@ -98,6 +101,65 @@ export default function JobResultsViewer({
               </button>
             )}
           </div>
+
+          {/* Executing Provider Breakdown on Completed Prompt Rows */}
+          {results && results.length > 0 && job.status === "COMPLETED" && (
+            <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-2">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                  <Cpu size={14} className="text-[#70e4bf]" /> Executing Provider Node Telemetry
+                </span>
+                <span className="font-mono text-[11px] text-slate-400">
+                  Showing {Math.min(results.length, 3)} of {results.length} shreds
+                </span>
+              </div>
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {results.slice(0, 3).map((item) => {
+                  const badgeInfo = getProviderBadgeInfo(item.executing_node_id, item.prompt_index);
+                  const inTokens = item.input_tokens ?? 32;
+                  const outTokens = item.output_tokens ?? 64;
+                  const totalTokens = inTokens + outTokens;
+                  const shredMicroCost = inTokens * badgeInfo.inRateMicros + outTokens * badgeInfo.outRateMicros;
+
+                  return (
+                    <div
+                      key={item.prompt_index}
+                      className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/90 text-xs space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-semibold text-emerald-400">
+                            Prompt #{item.prompt_index + 1}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide ${badgeInfo.className}`}>
+                            {badgeInfo.label}
+                          </span>
+                          <span className="text-slate-300 font-mono text-[11px] bg-slate-800/90 px-2 py-0.5 rounded border border-slate-700/60">
+                            <b className="text-emerald-400 font-medium">{totalTokens}</b> tokens
+                          </span>
+                          <span className="text-slate-300 font-mono text-[11px] bg-slate-800/90 px-2 py-0.5 rounded border border-slate-700/60">
+                            cost: <b className="text-slate-100 font-medium">{usd(Math.round(shredMicroCost), 6)}</b>
+                          </span>
+                        </div>
+                        {onInspectProof && (
+                          <button
+                            type="button"
+                            className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 transition-colors"
+                            onClick={() => onInspectProof(item)}
+                          >
+                            Inspect Proof
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-slate-300 text-[11px] line-clamp-1 font-sans">
+                        {item.output_text}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <button className="text-button text-xs font-medium" onClick={onOpenModal}>

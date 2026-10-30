@@ -30,3 +30,32 @@ export function nodeState(node: TelemetryNode | undefined, active: boolean) {
   if (node && (node.p95_ttft_ms > 200 || node.error_rate > 0.05)) return "slow";
   return "optimal";
 }
+
+export function getProviderBadgeInfo(nodeId?: string, promptIndex: number = 0) {
+  const id = (nodeId || "").toLowerCase();
+  if (id.includes("nebius") || id.includes("anchor")) {
+    return {
+      label: "Nebius Nemotron Anchor",
+      isAnchor: true,
+      className: "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30",
+      inRateMicros: 0.06,
+      outRateMicros: 0.24,
+    };
+  }
+  if (id.includes("community") || id.includes("spot-02") || id.includes("us-02") || promptIndex % 2 === 1) {
+    return {
+      label: "Community Spot L40S",
+      isAnchor: false,
+      className: "bg-indigo-500/15 text-indigo-300 border border-indigo-500/30",
+      inRateMicros: 0.035,
+      outRateMicros: 0.16,
+    };
+  }
+  return {
+    label: "RunPod H100 Spot",
+    isAnchor: false,
+    className: "bg-indigo-500/15 text-indigo-300 border border-indigo-500/30",
+    inRateMicros: 0.04,
+    outRateMicros: 0.18,
+  };
+}

@@ -36,6 +36,7 @@ import { INDUSTRY_BATCH_PRESETS } from "@/lib/batchPresets";
 import { exportAuditCertificate } from "@/lib/AuditCertificate";
 import { demoProviders, demoSnapshot, settleDemo } from "@/lib/simulation";
 import {
+  getProviderBadgeInfo,
   nodeState,
   usd,
   type Benchmark,
@@ -125,7 +126,19 @@ export default function MissionControl() {
   const [selectedPrompt, setSelectedPrompt] = useState<PromptResultItem | null>(null);
   const [isAttestationDrawerOpen, setIsAttestationDrawerOpen] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeSection, setActiveSection] = useState("overview");
+  const activeTab = activeSection;
+  const isNavLockedRef = useRef(false);
+  const navLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleNavClick = (sectionId: string) => {
+    setActiveSection(sectionId);
+    isNavLockedRef.current = true;
+    if (navLockTimerRef.current) clearTimeout(navLockTimerRef.current);
+    navLockTimerRef.current = setTimeout(() => {
+      isNavLockedRef.current = false;
+    }, 800);
+  };
   const [lastBatch, setLastBatch] = useState<{ batch_id: string; status: string } | null>(null);
   const [retry, setRetry] = useState(0);
   const eventId = useRef(0);
@@ -184,13 +197,11 @@ export default function MissionControl() {
     ];
     const observer = new IntersectionObserver(
       (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setActiveTab(entry.target.id);
-          }
-        }
+        if (isNavLockedRef.current) return;
+        const visible = entries.find((e) => e.isIntersecting);
+        if (visible) setActiveSection(visible.target.id);
       },
-      { rootMargin: "-15% 0px -65% 0px", threshold: 0.1 }
+      { rootMargin: "-20% 0px -60% 0px", threshold: 0.1 }
     );
 
     sectionIds.forEach((id) => {
@@ -198,7 +209,10 @@ export default function MissionControl() {
       if (el) observer.observe(el);
     });
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (navLockTimerRef.current) clearTimeout(navLockTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -212,10 +226,10 @@ export default function MissionControl() {
               status: "SIMULATED",
               executing_node_id:
                 job.sensitivity === "CONFIDENTIAL"
-                  ? "nebius-h100-anchor"
+                  ? "nebius-nemotron-anchor"
                   : i % 2 === 0
-                  ? "nebius-h100-anchor"
-                  : "spot-provider-alpha",
+                  ? "runpod-h100-spot-01"
+                  : "community-spot-02",
               output_text:
                 "Verified inference audits each batch before releasing node payment.",
               input_tokens: 32,
@@ -745,10 +759,10 @@ export default function MissionControl() {
             status: "SIMULATED",
             executing_node_id:
               job.sensitivity === "CONFIDENTIAL"
-                ? "nebius-h100-anchor"
+                ? "nebius-nemotron-anchor"
                 : i % 2 === 0
-                ? "nebius-h100-anchor"
-                : "spot-provider-alpha",
+                ? "runpod-h100-spot-01"
+                : "community-spot-02",
             output_text:
               "Verified inference audits each batch before releasing node payment.",
             input_tokens: 32,
@@ -847,12 +861,12 @@ export default function MissionControl() {
         </a>
         <nav className="flex flex-col items-center gap-3 w-full" aria-label="Main Navigation">
           {NAV_ITEMS.map((item) => {
-            const isSelected = activeTab === item.id;
+            const isSelected = activeSection === item.id;
             return (
               <div key={item.id} className="relative group flex items-center justify-center w-full px-2">
                 <a
                   href={item.href}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => handleNavClick(item.id)}
                   className={`nav-icon transition-all duration-150 flex items-center justify-center ${
                     isSelected
                       ? "text-emerald-400 bg-emerald-500/10 border-l-2 border-emerald-400 shadow-sm shadow-emerald-500/10"
@@ -1175,11 +1189,12 @@ export default function MissionControl() {
             done={done}
             running={running}
             busy={busy}
+            results={jobResults}
             onOpenModal={() => setModal(true)}
             onDownload={downloadResults}
             onExportAudit={handleExportAudit}
-            onInspectProof={() => {
-              setSelectedPrompt(jobResults?.[0] || null);
+            onInspectProof={(p) => {
+              setSelectedPrompt(p || jobResults?.[0] || null);
               setIsAttestationDrawerOpen(true);
             }}
           />
@@ -1432,30 +1447,48 @@ export default function MissionControl() {
                 </div>
 
                 <div className="max-h-72 overflow-y-auto space-y-2 pr-1 border border-slate-800/80 rounded-lg p-2 bg-slate-950/50">
-                  {jobResults.map((item) => (
-                    <div key={item.prompt_index} className="p-2.5 rounded bg-slate-900/90 border border-slate-800/90 text-xs">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-mono font-semibold text-emerald-400">Prompt #{item.prompt_index + 1}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-slate-400 text-xs font-mono">{item.executing_node_id}</span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
-                            {item.status}
-                          </span>
-                          <button
-                            type="button"
-                            className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 transition-colors"
-                            onClick={() => {
-                              setSelectedPrompt(item);
-                              setIsAttestationDrawerOpen(true);
-                            }}
-                          >
-                            Inspect Proof
-                          </button>
+                  {jobResults.map((item) => {
+                    const badgeInfo = getProviderBadgeInfo(item.executing_node_id, item.prompt_index);
+                    const inTokens = item.input_tokens ?? 32;
+                    const outTokens = item.output_tokens ?? 64;
+                    const totalTokens = inTokens + outTokens;
+                    const shredMicroCost = inTokens * badgeInfo.inRateMicros + outTokens * badgeInfo.outRateMicros;
+
+                    return (
+                      <div key={item.prompt_index} className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/90 text-xs space-y-1.5">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-semibold text-emerald-400">Prompt #{item.prompt_index + 1}</span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide ${badgeInfo.className}`}>
+                              {badgeInfo.label}
+                            </span>
+                            <span className="text-slate-300 font-mono text-[11px] bg-slate-800/90 px-2 py-0.5 rounded border border-slate-700/60">
+                              <b className="text-emerald-400 font-medium">{totalTokens}</b> tokens
+                            </span>
+                            <span className="text-slate-300 font-mono text-[11px] bg-slate-800/90 px-2 py-0.5 rounded border border-slate-700/60">
+                              cost: <b className="text-slate-100 font-medium">{usd(Math.round(shredMicroCost), 6)}</b>
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                              {item.status}
+                            </span>
+                            <button
+                              type="button"
+                              className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 transition-colors"
+                              onClick={() => {
+                                setSelectedPrompt(item);
+                                setIsAttestationDrawerOpen(true);
+                              }}
+                            >
+                              Inspect Proof
+                            </button>
+                          </div>
                         </div>
+                        <p className="text-slate-200 text-xs leading-relaxed font-sans">{item.output_text}</p>
                       </div>
-                      <p className="text-slate-200 text-xs leading-relaxed font-sans">{item.output_text}</p>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <div className="flex items-center gap-3 pt-2">

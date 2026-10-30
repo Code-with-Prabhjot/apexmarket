@@ -14,6 +14,7 @@ import {
   Scale,
 } from "lucide-react";
 import type { Attestation, PromptResultItem } from "@/lib/api";
+import { getProviderBadgeInfo, usd } from "@/lib/types";
 
 export interface AttestationDrawerProps {
   isOpen: boolean;
@@ -49,13 +50,19 @@ export default function AttestationDrawer({
   const nodeId =
     attestation?.node_id || promptResult?.executing_node_id || "nebius-nemotron-anchor";
 
+  const badgeInfo = getProviderBadgeInfo(nodeId, promptResult?.prompt_index ?? 0);
+  const inTokens = promptResult?.input_tokens ?? 32;
+  const outTokens = promptResult?.output_tokens ?? 64;
+
   const claimedTokens = promptResult
-    ? promptResult.input_tokens + promptResult.output_tokens
+    ? inTokens + outTokens
     : 384;
   const measuredTokens =
     attestation?.measured_input_tokens && attestation?.measured_output_tokens
       ? attestation.measured_input_tokens + attestation.measured_output_tokens
       : claimedTokens;
+
+  const shredMicroCost = inTokens * badgeInfo.inRateMicros + outTokens * badgeInfo.outRateMicros;
 
   const hmacSignature =
     attestation?.server_hmac_attestation ||
@@ -125,10 +132,31 @@ export default function AttestationDrawer({
             </div>
 
             <div className="flex items-center justify-between">
-              <span className="text-slate-400">Executing Node</span>
+              <span className="text-slate-400">Executing Provider</span>
+              <div className="flex items-center gap-2">
+                <span className={`px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide ${badgeInfo.className}`}>
+                  {badgeInfo.label}
+                </span>
+                <span className="font-mono text-slate-300 font-medium flex items-center gap-1.5">
+                  <Cpu size={13} className="text-[#70e4bf]" />
+                  {nodeId}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Authoritative Token Count</span>
               <span className="font-mono text-slate-200 font-medium flex items-center gap-1.5">
-                <Cpu size={13} className="text-[#70e4bf]" />
-                {nodeId}
+                <strong className="text-emerald-400 font-bold">{measuredTokens}</strong> tokens
+                <span className="text-slate-400 text-[11px]">({inTokens} in · {outTokens} out)</span>
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Individual Shred Micro-Cost</span>
+              <span className="font-mono text-emerald-400 font-semibold flex items-center gap-1.5">
+                {usd(Math.round(shredMicroCost), 6)}
+                <span className="text-slate-400 font-normal text-[11px]">({shredMicroCost.toFixed(2)} µ$)</span>
               </span>
             </div>
 
@@ -165,7 +193,7 @@ export default function AttestationDrawer({
               <p className="text-xs text-slate-400 leading-relaxed">
                 Output tokens measured by authoritative local tokenizer vs. node claim:{" "}
                 <strong className="text-slate-200 font-mono">{measuredTokens} / {claimedTokens} tokens</strong>.
-                Zero discrepancy detected.
+                Zero discrepancy detected. Shred settled cost: <strong className="text-emerald-400 font-mono">{usd(Math.round(shredMicroCost), 6)}</strong>.
               </p>
               <div className="flex items-center gap-2 text-[11px] text-slate-300 bg-[#142030] p-2 rounded border border-[#202c3c]">
                 <ShieldCheck size={13} className="text-[#70e4bf] shrink-0" />

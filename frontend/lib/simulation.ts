@@ -1,9 +1,9 @@
 import type { Provider, Snapshot } from "./types";
 
 export const demoProviders: Provider[] = [
-  { node_id: "nebius-anchor", provider_name: "Nebius Anchor", trust_tier: "ANCHOR", is_active: true, withdrawable_micros: 1834560, pending_probation_micros: 0, payout_pending_micros: 0 },
-  { node_id: "spot-eu-01", provider_name: "Spot · Europe", trust_tier: "VERIFIED_PROVIDER", is_active: true, withdrawable_micros: 736250, pending_probation_micros: 12450, payout_pending_micros: 0 },
-  { node_id: "spot-us-02", provider_name: "Spot · US East", trust_tier: "PROBATION_SPOT", is_active: true, withdrawable_micros: 426720, pending_probation_micros: 8430, payout_pending_micros: 0 },
+  { node_id: "nebius-nemotron-anchor", provider_name: "Nebius Token Factory", trust_tier: "ANCHOR", is_active: true, withdrawable_micros: 1834560, pending_probation_micros: 0, payout_pending_micros: 0 },
+  { node_id: "runpod-h100-spot-01", provider_name: "RunPod Spot Swarm", trust_tier: "VERIFIED_PROVIDER", is_active: true, withdrawable_micros: 736250, pending_probation_micros: 12450, payout_pending_micros: 0 },
+  { node_id: "community-spot-02", provider_name: "Community Swarm", trust_tier: "PROBATION_SPOT", is_active: true, withdrawable_micros: 426720, pending_probation_micros: 8430, payout_pending_micros: 0 },
 ];
 export function demoSnapshot(tick: number, confidential: boolean, slashed: boolean, total: number, done: number, jobId?: string): Snapshot {
   return {

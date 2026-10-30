@@ -565,7 +565,7 @@ h1 > span {
 
 .topology {
   width: 100%;
-  height: 365px;
+  height: 400px;
   position: relative;
 }
 
@@ -577,19 +577,16 @@ h1 > span {
 }
 
 .topology-empty {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
+  display: none;
 }
 
 .flow-card {
-  width: 230px;
-  min-height: 120px;
+  width: 280px;
+  min-height: 92px;
   border: 1px solid #324238;
   background: linear-gradient(120deg, #162522, #111c24);
   border-radius: 8px;
-  padding: 13px 15px;
+  padding: 10px 14px;
   box-shadow: 0 5px 30px #0004;
   font-family: Arial, sans-serif;
   color: var(--text);

@@ -77,16 +77,21 @@ export default function TelemetryGauges({
   const overheadMs = 9.4;
 
   // Threshold color calculation for TTFT
+  // Calibrated for normal cloud network latencies:
+  // < 180ms: Emerald / Optimal (#70e4bf)
+  // 180ms – 380ms: Amber / Normal Network Latency (#edbb72)
+  // > 380ms: Rose / Elevated Latency (#f87171)
   const getLatencyColor = (val: number) => {
-    if (val < 120) return { stroke: "#70e4bf", text: "text-[#70e4bf]", bg: "bg-[#70e4bf1a]" };
-    if (val <= 250) return { stroke: "#edbb72", text: "text-[#edbb72]", bg: "bg-[#edbb721a]" };
+    if (val < 180) return { stroke: "#70e4bf", text: "text-[#70e4bf]", bg: "bg-[#70e4bf1a]" };
+    if (val <= 380) return { stroke: "#edbb72", text: "text-[#edbb72]", bg: "bg-[#edbb721a]" };
     return { stroke: "#f87171", text: "text-[#f87171]", bg: "bg-[#f871711a]" };
   };
 
   const p95Color = getLatencyColor(p95);
 
-  // SVG Gauge calculations (Angle range: -110 deg to +110 deg)
-  const ttftAngle = Math.min(110, Math.max(-110, ((p95 - 0) / 300) * 220 - 110));
+  // SVG Gauge calculations (Single semi-circular track: angle range -90 deg to +90 deg from vertical)
+  const clampedP95 = Math.min(500, Math.max(0, p95));
+  const ttftAngle = (clampedP95 / 500) * 180 - 90;
   const tpsMax = 1500;
   const tpsAngle = Math.min(110, Math.max(-110, (currentTps / tpsMax) * 220 - 110));
   const overheadMax = 20;
@@ -108,59 +113,52 @@ export default function TelemetryGauges({
             <span
               className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${p95Color.bg} ${p95Color.text} border border-current/30`}
             >
-              {p95 < 120 ? "Optimal (<120ms)" : p95 <= 250 ? "Moderate (120-250ms)" : "Degraded (>250ms)"}
+              {p95 < 180 ? "Optimal (<180ms)" : p95 <= 380 ? "Normal Latency (180–380ms)" : "Elevated Latency (>380ms)"}
             </span>
           </div>
 
-          {/* SVG Semi-Circle Dial */}
+          {/* SVG Semi-Circle Dial - Single Unified Track */}
           <div className="relative flex flex-col items-center justify-center my-4">
-            <svg viewBox="0 0 200 125" className="w-48 h-30 overflow-visible">
-              {/* Dial Track: Background Arc */}
+            <svg viewBox="0 0 200 115" className="w-48 h-28 overflow-visible">
+              {/* Single Semi-Circular Track: 3 Contiguous Color Segments (r=72, cx=100, cy=95) */}
+              {/* Emerald Zone (0 – 180ms: 180° to 115°) */}
               <path
-                d="M 25 110 A 80 80 0 1 1 175 110"
+                d="M 28 95 A 72 72 0 0 1 69.6 29.8"
                 fill="none"
-                stroke="#182334"
-                strokeWidth="14"
+                stroke="#70e4bf"
+                strokeWidth="10"
                 strokeLinecap="round"
               />
-              {/* Latency Threshold Bands */}
-              {/* <120ms Green Zone */}
+              {/* Amber Zone (180 – 380ms: 115° to 43°) */}
               <path
-                d="M 25 110 A 80 80 0 0 1 80 37"
+                d="M 69.6 29.8 A 72 72 0 0 1 152.7 45.9"
                 fill="none"
-                stroke="#70e4bf33"
-                strokeWidth="14"
+                stroke="#edbb72"
+                strokeWidth="10"
               />
-              {/* 120-250ms Amber Zone */}
+              {/* Rose Zone (380 – 500ms: 43° to 0°) */}
               <path
-                d="M 80 37 A 80 80 0 0 1 150 55"
+                d="M 152.7 45.9 A 72 72 0 0 1 172 95"
                 fill="none"
-                stroke="#edbb7233"
-                strokeWidth="14"
-              />
-              {/* >250ms Red Zone */}
-              <path
-                d="M 150 55 A 80 80 0 0 1 175 110"
-                fill="none"
-                stroke="#f8717133"
-                strokeWidth="14"
+                stroke="#f87171"
+                strokeWidth="10"
                 strokeLinecap="round"
               />
-              {/* Active Needle */}
+              {/* Active Needle (Pivots cleanly from (100, 95)) */}
               <g
-                transform={`rotate(${ttftAngle} 100 110)`}
+                transform={`rotate(${ttftAngle} 100 95)`}
                 style={{ transition: "transform 600ms cubic-bezier(0.4, 0, 0.2, 1)" }}
               >
                 <line
                   x1="100"
-                  y1="110"
+                  y1="95"
                   x2="100"
-                  y2="34"
+                  y2="32"
                   stroke={p95Color.stroke}
                   strokeWidth="3.5"
                   strokeLinecap="round"
                 />
-                <circle cx="100" cy="110" r="7" fill="#0c121e" stroke={p95Color.stroke} strokeWidth="3" />
+                <circle cx="100" cy="95" r="5.5" fill="#0c121e" stroke={p95Color.stroke} strokeWidth="3" />
               </g>
             </svg>
 
