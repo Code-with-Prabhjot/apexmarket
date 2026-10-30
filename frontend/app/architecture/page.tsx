@@ -191,7 +191,7 @@ export default function ArchitecturePage() {
                 {"Seed_CSPRNG = HMAC-SHA256(SecretKey, shred_id.bytes)[:8]"}
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
-                These prompts are concurrently executed on the trusted <strong>Nebius Token Factory Anchor</strong> (<code className="text-[#70e4bf]">nvidia/nemotron-3-nano-30b-a3b</code>) at temperature 0.0.
+                These prompts are concurrently executed on the trusted <strong>Nebius Token Factory Anchor</strong> (<code className="text-[#70e4bf]">nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B</code>) at temperature 0.0.
                 This dual-stream execution establishes the authoritative baseline for semantic and perplexity comparison.
               </p>
             </div>

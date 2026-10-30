@@ -20,7 +20,15 @@ export type Job = {
   baseline_batch_api_cost_micros?: number;
 };
 export type BenchmarkRow = {
-  run: string; route: string; cost: number; makespan: number; throughput: number; prompts: number;
+  run: string;
+  route: string;
+  cost: number;
+  makespan: number;
+  throughput: number;
+  prompts: number;
+  p50_ttft_ms?: number;
+  p95_ttft_ms?: number;
+  execution_mode?: string;
 };
 export type Benchmark = { rows: BenchmarkRow[]; source: string; provenance: string; updated: string };
 export const usd = (micros: number, digits = 6) => `$${(micros / 1_000_000).toFixed(digits)}`;

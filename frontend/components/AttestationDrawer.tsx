@@ -233,7 +233,7 @@ export default function AttestationDrawer({
                 </span>
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
-                5% secret CSPRNG-seeded prompts re-executed against unquantized Nebius Anchor (nvidia/nemotron-3-nano-30b-a3b) at temperature 0.0. Semantic alignment exceeds threshold (0.9800).
+                5% secret CSPRNG-seeded prompts re-executed against unquantized Nebius Anchor (nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B) at temperature 0.0. Semantic alignment exceeds threshold (0.9800).
               </p>
             </article>
 

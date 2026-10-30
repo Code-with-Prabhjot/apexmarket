@@ -25,8 +25,8 @@ export interface ModelPricingOption {
 
 export const COMPARATOR_MODELS: ModelPricingOption[] = [
   {
-    id: "nvidia/nemotron-3-nano-30b-a3b",
-    name: "nvidia/nemotron-3-nano-30b-a3b",
+    id: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+    name: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
     tag: "Nebius Token Factory Anchor",
     onDemandPricePer1M: 0.30,
     providerAnchor: "Nebius H100 Token Factory (Unquantized)",

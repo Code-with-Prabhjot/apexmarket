@@ -16,7 +16,7 @@ High-volume batch LLM consumers encounter a severe dilemma: **Retail API menus a
 
 1. **Shred & Route:** Your batch is partitioned into micro-batches of $\le 50$ prompts and routed across low-cost spot nodes (RunPod, community GPUs). Confidential workloads are air-gapped 100% to the trusted Nebius Anchor.
 2. **Active Canaries:** 4% secret challenge prompts sealed with HMAC-SHA256 signatures are injected into the shred stream.
-3. **Anchor Teacher-Forcing:** 5% of real user prompts run concurrently on the **Nebius Token Factory Anchor** (`nvidia/nemotron-3-nano-30b-a3b`) at temperature 0.0. The anchor calculates cross-entropy logprobs over the candidate's tokens.
+3. **Anchor Teacher-Forcing:** 5% of real user prompts run concurrently on the **Nebius Token Factory Anchor** (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`) at temperature 0.0. The anchor calculates cross-entropy logprobs over the candidate's tokens.
 4. **Slashing & Instant Failover:** If an untrusted node silently substitutes an INT4 quantized model or corrupts prompts, its NLL score spikes ($NLL > 2.80$). The node is **slashed ($0.00 payout)**, and the shred automatically fails over to the Nebius Anchor with zero prompt loss.
 5. **PayPal Micro-Dollar Settlement:** Verified shreds are credited into a PostgreSQL double-entry micro-dollar ledger ($1,000,000\text{ micros} = \$1.00$) and settled via idempotent PayPal batch payouts.
 
@@ -72,7 +72,7 @@ Addressing the primary evaluator requirement (*"Show which model does what"*):
 
 | Model Name | Hosting Infrastructure | Hardware / Runtimes | Role in ApexMarket Pipeline |
 | :--- | :--- | :--- | :--- |
-| **`nvidia/nemotron-3-nano-30b-a3b`** | **Nebius Token Factory** | NVIDIA H100 SXM5 Cluster · Unquantized Weights · Temp 0.0 | **The Authoritative Reference Anchor:**<br>• Serves 100% of air-gapped `CONFIDENTIAL` enterprise workloads.<br>• Generates golden reference completions for 5% secret CSPRNG sample prompts.<br>• Executes teacher-forcing cross-entropy logprob scoring (Tier 4) to detect INT4 quantization drift.<br>• Serves as the supreme court semantic arbiter (Tier 5) on borderline batches. |
+| **`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`** | **Nebius Token Factory** | NVIDIA H100 SXM5 Cluster · Unquantized Weights · Temp 0.0 | **The Authoritative Reference Anchor:**<br>• Serves 100% of air-gapped `CONFIDENTIAL` enterprise workloads.<br>• Generates golden reference completions for 5% secret CSPRNG sample prompts.<br>• Executes teacher-forcing cross-entropy logprob scoring (Tier 4) to detect INT4 quantization drift.<br>• Serves as the supreme court semantic arbiter (Tier 5) on borderline batches. |
 | **`meta-llama/Llama-3.1-8B-Instruct`** | **Distributed Spot Swarm** (RunPod / vLLM) | Community Spot Nodes · PCIe H100 / L40S | **Low-Cost Bulk Execution:**<br>• Executes high-volume `PUBLIC` and `SYNTHETIC` micro-batch shreds.<br>• Operates at 40%–60% below hyperscaler retail pricing.<br>• Subject to continuous 4% canary probes and 5% anchor NLL audits before escrow release. |
 | **`mistralai/Mistral-NeMo-12B-Instruct`** | **Multi-Provider Hybrid Pool** | Open-Weight Secondary Swarm | **Economic Benchmark Comparator:**<br>• Evaluated in multi-model arbitrage matrix against proprietary batch APIs. |
 

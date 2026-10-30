@@ -21,7 +21,7 @@ DEFAULT_SEEDED_NODES: List[Dict[str, Any]] = [
     {
         "node_id": "nebius-nemotron-anchor",
         "provider_name": "Nebius Token Factory",
-        "model_id": "nvidia/nemotron-3-nano-30b-a3b",
+        "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         "trust_tier": "ANCHOR",
         "input_price_per_1m_micros": 60000,
         "output_price_per_1m_micros": 240000,
@@ -32,7 +32,7 @@ DEFAULT_SEEDED_NODES: List[Dict[str, Any]] = [
     {
         "node_id": "runpod-h100-spot-01",
         "provider_name": "RunPod PCIe H100",
-        "model_id": "nvidia/nemotron-3-nano-30b-a3b",
+        "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         "trust_tier": "PROBATION_SPOT",
         "input_price_per_1m_micros": 40000,
         "output_price_per_1m_micros": 180000,
@@ -43,7 +43,7 @@ DEFAULT_SEEDED_NODES: List[Dict[str, Any]] = [
     {
         "node_id": "community-spot-02",
         "provider_name": "Community H100 Spot",
-        "model_id": "nvidia/nemotron-3-nano-30b-a3b",
+        "model_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         "trust_tier": "PROBATION_SPOT",
         "input_price_per_1m_micros": 35000,
         "output_price_per_1m_micros": 160000,

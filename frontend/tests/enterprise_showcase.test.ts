@@ -53,8 +53,10 @@ test("verifyAuditCertificate detects inflated token counts in header", async () 
 test("COMPARATOR_MODELS contains all 3 required models with exact pricing formulas", () => {
   assert.equal(COMPARATOR_MODELS.length, 3);
 
-  const nemotron = COMPARATOR_MODELS.find((m) => m.id === "nvidia/nemotron-3-nano-30b-a3b");
-  assert.ok(nemotron, "Must have nvidia/nemotron-3-nano-30b-a3b");
+  const nemotron = COMPARATOR_MODELS.find(
+    (m) => m.id === "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B" || m.id === "nvidia/nemotron-3-nano-30b-a3b"
+  );
+  assert.ok(nemotron, "Must have nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B");
   assert.equal(nemotron.onDemandPricePer1M, 0.30);
 
   const llama = COMPARATOR_MODELS.find((m) => m.id === "meta-llama/Llama-3.1-8B-Instruct");

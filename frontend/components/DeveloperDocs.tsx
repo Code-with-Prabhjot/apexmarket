@@ -58,7 +58,7 @@ curl -X POST https://api.apexmarket.internal/api/v1/jobs \\
   -H "X-API-Key: am_live_prod_9f82c47a110e8b2" \\
   -d '{
     "sensitivity": "CONFIDENTIAL",
-    "target_model": "nvidia/nemotron-3-nano-30b-a3b",
+    "target_model": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
     "max_tokens_per_prompt": 512,
     "max_cost_ceiling_micros": 1000000,
     "makespan_sla_seconds": 120.0,

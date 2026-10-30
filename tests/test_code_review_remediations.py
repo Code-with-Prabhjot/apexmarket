@@ -60,7 +60,7 @@ async def test_mock_fallback_fails_closed_in_production(monkeypatch):
     node = ExecNode(
         node_id="runpod-h100-spot-01",
         endpoint_url="http://localhost:8001/v1",
-        model_id="nvidia/nemotron-3-nano-30b-a3b",
+        model_id="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         is_anchor=False,
     )
     executor = ShredExecutor([node, ExecNode("anchor", "https://api.tokenfactory.nebius.com/v1", "anchor", is_anchor=True)])
@@ -85,13 +85,13 @@ async def test_mock_fallback_tagged_with_simulated_metadata(monkeypatch):
     node = ExecNode(
         node_id="runpod-h100-spot-01",
         endpoint_url="http://localhost:8001/v1",
-        model_id="nvidia/nemotron-3-nano-30b-a3b",
+        model_id="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         is_anchor=False,
     )
     anchor = ExecNode(
         node_id="nebius-nemotron-anchor",
         endpoint_url="https://api.tokenfactory.nebius.com/v1",
-        model_id="nvidia/nemotron-3-nano-30b-a3b",
+        model_id="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         is_anchor=True,
     )
     executor = ShredExecutor([node, anchor])
@@ -184,7 +184,7 @@ def test_capacity_aware_scheduler_filters_quarantined_nodes():
         node_id="nebius-nemotron-anchor",
         provider_name="Nebius",
         endpoint_url="https://api.tokenfactory.nebius.com/v1",
-        model_id="nvidia/nemotron-3-nano-30b-a3b",
+        model_id="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         trust_tier=NodeTrustTier.ANCHOR,
         input_price_per_1m_micros=60000,
         output_price_per_1m_micros=240000,
@@ -196,7 +196,7 @@ def test_capacity_aware_scheduler_filters_quarantined_nodes():
         node_id="runpod-h100-spot-01",
         provider_name="RunPod",
         endpoint_url="http://localhost:8001/v1",
-        model_id="nvidia/nemotron-3-nano-30b-a3b",
+        model_id="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         trust_tier=NodeTrustTier.PROBATION_SPOT,
         input_price_per_1m_micros=40000,
         output_price_per_1m_micros=180000,

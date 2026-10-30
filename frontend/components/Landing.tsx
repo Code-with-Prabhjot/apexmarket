@@ -94,7 +94,7 @@ const pillars = [
     icon: Anchor,
     tag: "Reference Anchor",
     title: "Nebius Nemotron-3-Nano Anchor",
-    desc: "Unquantized reference anchor (nvidia/nemotron-3-nano-30b-a3b) running at temperature 0.0 with 5% secret-seeded CSPRNG sampling and logprob drift detection to catch silent provider model substitutions.",
+    desc: "Unquantized reference anchor (nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B) running at temperature 0.0 with 5% secret-seeded CSPRNG sampling and logprob drift detection to catch silent provider model substitutions.",
     badge: "5% CSPRNG Audit",
   },
   {

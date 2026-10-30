@@ -15,7 +15,7 @@ High-volume batch LLM workloads encounter two distinct pricing structures across
 > **"OpenRouter routes individual requests by price floor and monitors provider health in aggregate, while levying a $5.5\%$ credit card surcharge. ApexMarket is engineered for batch workloads where proof precedes payment: every batch shred is audited via secret-seeded canary probes, anchor logprob teacher-forcing perplexity scoring, and a Nemotron judge model before releasing escrowed funds from an internal sub-cent ledger via batched PayPal Payouts."**
 
 ### 1.3 Strategic Platform Synergy
-* **Nebius x NVIDIA Integration:** Uses **Nebius Token Factory** as the trusted reference anchor (`nvidia/nemotron-3-nano-30b-a3b` at $\$0.06$ input and $\$0.24$ output per $10^6$ tokens, $\approx 145\text{ tokens/sec}$) alongside a larger Nemotron instruction model as the Tier-5 semantic judge. It also supports hosting a self-hosted quantized vLLM worker node on **Nebius AI Cloud** to demonstrate real hardware-level quantization drift detection.
+* **Nebius x NVIDIA Integration:** Uses **Nebius Token Factory** as the trusted reference anchor (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` at $\$0.06$ input and $\$0.24$ output per $10^6$ tokens, $\approx 145\text{ tokens/sec}$) alongside a larger Nemotron instruction model as the Tier-5 semantic judge. It also supports hosting a self-hosted quantized vLLM worker node on **Nebius AI Cloud** to demonstrate real hardware-level quantization drift detection.
 * **PayPal Agentic Commerce Integration:** Eliminates per-shred transaction fee destruction ($\$0.49$ buyer capture fee and $\$0.25$ payout fee) by implementing a **Prepaid Client Balance Pool** via PayPal Orders v2 (`intent: CAPTURE` with PayPal Vaulting) paired with an internal **PostgreSQL Double-Entry Micro-Dollar Ledger** and consolidated **PayPal Mass Payouts**.
 * **Batch-First Optimization:** Optimizes for **Total Batch Makespan (seconds to completion)**, **Aggregate Throughput (tokens/sec)**, and **Net Verified Cost** (explicitly accounting for the $\approx 9\%$ verification overhead of $4\%$ canaries and $5\%$ anchor re-runs).
 
@@ -745,7 +745,7 @@ async def main():
     csv_path = "benchmarks/empirical_results.csv"
     rows = []
 
-    model_id = os.getenv("BENCHMARK_MODEL_ID", "nvidia/nemotron-3-nano-30b-a3b")
+    model_id = os.getenv("BENCHMARK_MODEL_ID", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B")
 
     for run_idx in range(1, 4):
         # 1. Default Single-Provider Baseline

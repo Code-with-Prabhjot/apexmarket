@@ -197,7 +197,7 @@ class InMemoryTestStore:
                 "node_id": nid,
                 "provider_name": params.get("provider_name", "Test Provider"),
                 "endpoint_url": params.get("endpoint_url", "http://test/v1"),
-                "model_id": params.get("model_id", "nvidia/nemotron-3-nano-30b-a3b"),
+                "model_id": params.get("model_id", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"),
                 "trust_tier": params.get("trust_tier", "PROBATION_SPOT"),
                 "paypal_receiver_email": params.get("paypal_receiver_email", "node@example.com"),
                 "input_price_per_1m_micros": params.get("input_price_per_1m_micros", params.get("input_price", 40000)),

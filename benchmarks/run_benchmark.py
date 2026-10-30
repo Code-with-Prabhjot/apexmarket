@@ -4,7 +4,7 @@ Executes empirical streaming runs against Nebius Token Factory and secondary bas
 measuring exact TTFT, token throughput, and verified net cost across 3 runs.
 
 Harness Fallback Switch:
-  - If NEBIUS_API_KEY is present and valid, runs live against Nebius Token Factory (nvidia/nemotron-3-nano-30b-a3b).
+  - If NEBIUS_API_KEY is present and valid, runs live against Nebius Token Factory (nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B).
   - If uncredited, invalid, or missing, executes the deterministic test harness with a visible
     [DRY-RUN / MOCK] flag in the generated CSV header so simulated numbers are never misrepresented.
 Outputs structured empirical metrics to benchmarks/empirical_results.csv.
@@ -26,7 +26,7 @@ NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY", "")
 EXECUTE_LIVE_NEBIUS = os.getenv("EXECUTE_LIVE_NEBIUS", "").lower() in ("true", "1", "yes")
 SECONDARY_BASE_URL = os.getenv("SECONDARY_BASE_URL", "https://openrouter.ai/api/v1")
 SECONDARY_API_KEY = os.getenv("SECONDARY_API_KEY", "")
-BENCHMARK_MODEL_ID = os.getenv("BENCHMARK_MODEL_ID", "nvidia/nemotron-3-nano-30b-a3b")
+BENCHMARK_MODEL_ID = os.getenv("BENCHMARK_MODEL_ID", "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B")
 
 THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 

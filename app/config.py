@@ -3,6 +3,7 @@ ApexMarket: Configuration and Environment Settings
 Implements typed, production-grade settings via Pydantic Settings v2.
 """
 
+import os
 from functools import lru_cache
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -28,7 +29,10 @@ class Settings(BaseSettings):
     DEMO_MOCK_PROVIDER_URL: str = Field(default="http://127.0.0.1:9002", description="Local mock provider chaos target")
 
     # Nebius Token Factory (Reference Anchor & Verification Judge)
-    NEBIUS_API_KEY: str = Field(default="", description="Nebius Token Factory API key")
+    NEBIUS_API_KEY: str = Field(
+        default_factory=lambda: os.getenv("NEBIUS_API_KEY", ""),
+        description="Nebius Token Factory API key",
+    )
     EXECUTE_LIVE_NEBIUS: bool = Field(
         default=False,
         description="Explicit credit protection guard: MUST be true to allow live outbound API calls to Nebius Token Factory. Protects $25 credit voucher from being burned during local dev or automated testing.",
@@ -38,7 +42,7 @@ class Settings(BaseSettings):
         description="Nebius Token Factory OpenAI-compatible base URL",
     )
     NEBIUS_ANCHOR_MODEL_ID: str = Field(
-        default="nvidia/nemotron-3-nano-30b-a3b",
+        default="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         description="Reference anchor model ID on Nebius",
     )
     NEBIUS_JUDGE_MODEL_ID: str = Field(
@@ -53,7 +57,7 @@ class Settings(BaseSettings):
         description="Secondary OpenAI-compatible base URL",
     )
     BENCHMARK_MODEL_ID: str = Field(
-        default="nvidia/nemotron-3-nano-30b-a3b",
+        default="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
         description="Default model ID for empirical benchmarks",
     )
 
